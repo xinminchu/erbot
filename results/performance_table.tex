@@ -1,0 +1,109 @@
+\documentclass[border=1mm]{standalone}
+\usepackage{amssymb, amsmath}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{float}
+\usepackage{colortbl}
+\usepackage{pdflscape}
+\usepackage{tabu}
+\usepackage{threeparttable}
+\usepackage{threeparttablex}
+\usepackage[normalem]{ulem}
+\usepackage[utf8]{inputenc}
+\usepackage{makecell}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{xunicode}
+\usepackage{xcolor}
+\begin{document}
+\begin{table}[!h]
+\centering
+\caption{Entity Resolution Performance by Feature and Method}
+\centering
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{
+\begin{tabular}[t]{lrrrr}
+\toprule
+Method & ARI & Precision & Recall & F1\\
+\midrule
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{address}}\\
+\hspace{1em}\cellcolor{gray!10}{Kmeans_TFIDF} & \cellcolor{gray!10}{0.021} & \cellcolor{gray!10}{0.050} & \cellcolor{gray!10}{0.836} & \cellcolor{gray!10}{0.094}\\
+\hspace{1em}MST_Edit & 0.002 & 0.039 & \textcolor{red}{\textbf{0.995}} & 0.075\\
+\hspace{1em}\cellcolor{gray!10}{Louvain_KNN} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.071}}} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.076}}} & \cellcolor{gray!10}{0.746} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.137}}}\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{authors}}\\
+\hspace{1em}Kmeans_TFIDF & 0.074 & 0.076 & \textcolor{red}{\textbf{0.999}} & 0.142\\
+\hspace{1em}\cellcolor{gray!10}{MST_Edit} & \cellcolor{gray!10}{0.004} & \cellcolor{gray!10}{0.041} & \cellcolor{gray!10}{0.998} & \cellcolor{gray!10}{0.079}\\
+\hspace{1em}Louvain_KNN & \textcolor{red}{\textbf{0.244}} & \textcolor{red}{\textbf{0.270}} & 0.279 & \textcolor{red}{\textbf{0.274}}\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{book\textbackslash{}\$1title}}\\
+\hspace{1em}\cellcolor{gray!10}{Kmeans_TFIDF} & \cellcolor{gray!10}{0.017} & \cellcolor{gray!10}{0.048} & \cellcolor{gray!10}{0.942} & \cellcolor{gray!10}{0.090}\\
+\hspace{1em}MST_Edit & 0.002 & 0.049 & \textcolor{red}{\textbf{0.999}} & 0.093\\
+\hspace{1em}\cellcolor{gray!10}{Louvain_KNN} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.147}}} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.117}}} & \cellcolor{gray!10}{0.866} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.206}}}\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{date}}\\
+\hspace{1em}Kmeans_TFIDF & 0.011 & 0.045 & \textcolor{red}{\textbf{0.989}} & 0.086\\
+\hspace{1em}\cellcolor{gray!10}{MST_Edit} & \cellcolor{gray!10}{0.007} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.126}}} & \cellcolor{gray!10}{0.952} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.222}}}\\
+\hspace{1em}Louvain_KNN & \textcolor{red}{\textbf{0.049}} & 0.064 & 0.888 & 0.119\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{editor}}\\
+\hspace{1em}\cellcolor{gray!10}{Kmeans_TFIDF} & \cellcolor{gray!10}{0.028} & \cellcolor{gray!10}{0.053} & \cellcolor{gray!10}{0.862} & \cellcolor{gray!10}{0.100}\\
+\hspace{1em}MST_Edit & 0.007 & \textcolor{red}{\textbf{0.099}} & \textcolor{red}{\textbf{0.980}} & \textcolor{red}{\textbf{0.180}}\\
+\hspace{1em}\cellcolor{gray!10}{Louvain_KNN} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.034}}} & \cellcolor{gray!10}{0.056} & \cellcolor{gray!10}{0.826} & \cellcolor{gray!10}{0.105}\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{institution}}\\
+\hspace{1em}Kmeans_TFIDF & 0.023 & 0.050 & \textcolor{red}{\textbf{0.982}} & 0.095\\
+\hspace{1em}\cellcolor{gray!10}{MST_Edit} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.035}}} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.145}}} & \cellcolor{gray!10}{0.947} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.252}}}\\
+\hspace{1em}Louvain_KNN & 0.021 & 0.049 & 0.955 & 0.094\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{journal}}\\
+\hspace{1em}\cellcolor{gray!10}{Kmeans_TFIDF} & \cellcolor{gray!10}{0.003} & \cellcolor{gray!10}{0.041} & \cellcolor{gray!10}{0.976} & \cellcolor{gray!10}{0.078}\\
+\hspace{1em}MST_Edit & 0.037 & \textcolor{red}{\textbf{0.217}} & \textcolor{red}{\textbf{1.000}} & \textcolor{red}{\textbf{0.357}}\\
+\hspace{1em}\cellcolor{gray!10}{Louvain_KNN} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.062}}} & \cellcolor{gray!10}{0.070} & \cellcolor{gray!10}{0.882} & \cellcolor{gray!10}{0.130}\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{note}}\\
+\hspace{1em}Kmeans_TFIDF & 0.002 & 0.040 & \textcolor{red}{\textbf{0.988}} & 0.078\\
+\hspace{1em}\cellcolor{gray!10}{MST_Edit} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.075}}} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.111}}} & \cellcolor{gray!10}{0.972} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.199}}}\\
+\hspace{1em}Louvain_KNN & 0.004 & 0.041 & 0.981 & 0.079\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{pages}}\\
+\hspace{1em}\cellcolor{gray!10}{Kmeans_TFIDF} & \cellcolor{gray!10}{0.029} & \cellcolor{gray!10}{0.053} & \cellcolor{gray!10}{0.884} & \cellcolor{gray!10}{0.101}\\
+\hspace{1em}MST_Edit & 0.002 & 0.063 & \textcolor{red}{\textbf{0.999}} & 0.119\\
+\hspace{1em}\cellcolor{gray!10}{Louvain_KNN} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.155}}} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.127}}} & \cellcolor{gray!10}{0.606} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.210}}}\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{publisher}}\\
+\hspace{1em}Kmeans_TFIDF & 0.006 & 0.042 & 0.917 & 0.080\\
+\hspace{1em}\cellcolor{gray!10}{MST_Edit} & \cellcolor{gray!10}{0.003} & \cellcolor{gray!10}{0.062} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.996}}} & \cellcolor{gray!10}{0.117}\\
+\hspace{1em}Louvain_KNN & \textcolor{red}{\textbf{0.064}} & \textcolor{red}{\textbf{0.071}} & 0.787 & \textcolor{red}{\textbf{0.131}}\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{tech}}\\
+\hspace{1em}\cellcolor{gray!10}{Kmeans_TFIDF} & \cellcolor{gray!10}{0.013} & \cellcolor{gray!10}{0.046} & \cellcolor{gray!10}{0.985} & \cellcolor{gray!10}{0.087}\\
+\hspace{1em}MST_Edit & \textcolor{red}{\textbf{0.041}} & \textcolor{red}{\textbf{0.317}} & 0.815 & \textcolor{red}{\textbf{0.456}}\\
+\hspace{1em}\cellcolor{gray!10}{Louvain_KNN} & \cellcolor{gray!10}{0.014} & \cellcolor{gray!10}{0.046} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.991}}} & \cellcolor{gray!10}{0.088}\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{title}}\\
+\hspace{1em}Kmeans_TFIDF & 0.046 & 0.062 & 0.778 & 0.116\\
+\hspace{1em}\cellcolor{gray!10}{MST_Edit} & \cellcolor{gray!10}{0.001} & \cellcolor{gray!10}{0.041} & \cellcolor{gray!10}{\textcolor{red}{\textbf{1.000}}} & \cellcolor{gray!10}{0.079}\\
+\hspace{1em}Louvain_KNN & \textcolor{red}{\textbf{0.419}} & \textcolor{red}{\textbf{0.382}} & 0.534 & \textcolor{red}{\textbf{0.445}}\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{type}}\\
+\hspace{1em}\cellcolor{gray!10}{Kmeans_TFIDF} & \cellcolor{gray!10}{0.008} & \cellcolor{gray!10}{0.043} & \cellcolor{gray!10}{0.992} & \cellcolor{gray!10}{0.083}\\
+\hspace{1em}MST_Edit & -0.037 & \textcolor{red}{\textbf{0.159}} & 0.777 & \textcolor{red}{\textbf{0.264}}\\
+\hspace{1em}\cellcolor{gray!10}{Louvain_KNN} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.010}}} & \cellcolor{gray!10}{0.044} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.995}}} & \cellcolor{gray!10}{0.084}\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{volume}}\\
+\hspace{1em}Kmeans_TFIDF & -0.001 & 0.039 & 0.799 & 0.074\\
+\hspace{1em}\cellcolor{gray!10}{MST_Edit} & \cellcolor{gray!10}{-0.001} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.133}}} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.967}}} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.233}}}\\
+\hspace{1em}Louvain_KNN & \textcolor{red}{\textbf{0.040}} & 0.060 & 0.484 & 0.107\\
+\addlinespace[0.3em]
+\multicolumn{5}{l}{\textbf{year}}\\
+\hspace{1em}\cellcolor{gray!10}{Kmeans_TFIDF} & \cellcolor{gray!10}{0.050} & \cellcolor{gray!10}{0.064} & \cellcolor{gray!10}{0.958} & \cellcolor{gray!10}{0.120}\\
+\hspace{1em}MST_Edit & 0.001 & 0.064 & \textcolor{red}{\textbf{0.993}} & 0.121\\
+\hspace{1em}\cellcolor{gray!10}{Louvain_KNN} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.293}}} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.207}}} & \cellcolor{gray!10}{0.928} & \cellcolor{gray!10}{\textcolor{red}{\textbf{0.339}}}\\
+\bottomrule
+\end{tabular}}
+\end{table}
+\end{document}

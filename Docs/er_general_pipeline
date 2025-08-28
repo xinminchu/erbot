@@ -1,0 +1,101 @@
+
+ER general pipeline
+
+# Unified, modular ER pipeline (cora / affiliation / D10K / etc.)
+============================================================
+
+# ---- Packages ----
+.er_require <- function(pkgs)
+
+.er_require(c(
+  "data.table","dplyr","tibble","stringr","stringi","tidyr","purrr",
+  "readr","readxl","text2vec","Matrix","irlba","stringdist","igraph",
+  "FNN","mclust"
+))
+
+0) Truth handling helpers
+er_pairs_to_clusters <- function(truth_pairs, id1 = "id1", id2 = "id2")
+
+er_truth_from_any <- function(truth, sep_pair = "\\|",
+                              id_candidates = c("id","record_id","rec_id","docid","rowid","paper_id"))
+
+1) Data loading / input normalization
+er_load_input <- function(data,
+                          sheet = NULL,
+                          dataset_name = NULL)
+
+2) Column detection & text building
+er_select_fields <- function(df,
+                             id_col = NULL,
+                             fields = NULL,              # character vector of columns to combine (preferred)
+                             extra_fields = NULL,        # additional columns to concat (optional)
+                             id_candidates = c("id","affiliation_id","record_id","rec_id","docid","rowid","paper_id"),
+                             text_candidates = c("title","name","raw_title","string","text","affiliation","aggregate value","clean ag.value"),
+                             normalize = TRUE)
+
+3) Embedding parsing (for D10K-like)
+er_safe_parse_embedding_col <- function(x)
+
+4) Methods
+er_kmeans_tfidf <- function(text_vec, k = 10, svd_dim = 100, seed = 123)
+
+er_mst_or_sn_edit <- function(text_vec, mst_cut_ratio = 5, mst_k = NULL,
+                              sn_window = 40, sn_method = "jw", sn_thresh = 0.12)
+
+er_louvain_knn <- function(text_vec, knn = 10, min_sim = 0.0, svd_dim = 100)
+
+er_embed_knn <- function(emb_mat, k = 15, cos_thresh = 0.88)
+
+5) Evaluation
+
+er_choose2 <- function(x)
+er_pairwise_prf_fast <- function(pred, truth)
+er_adj_rand <- function(p, t)
+
+6) Unified pipeline
+er_unified_pipeline <- function(
+    data,                            # df, path/URL, or key "cora"
+    truth = NULL,                    # df/path/named vector/pair list/single-col pair
+    sheet = NULL,                    # excel sheet (if applicable)
+    # text building
+    id_col = NULL,
+    fields = NULL,
+    extra_fields = NULL,
+    id_candidates = c("id","affiliation_id","record_id","rec_id","docid","rowid","paper_id"),
+    text_candidates = c("title","name","raw_title","string","text","affiliation","aggregate value","clean ag.value"),
+    # embeddings
+    embed_col = NULL,
+    embed_candidates = c("embedded clean ag.value","embedded ag.value","emb","embedding","vector","embedding_clean"),
+    # methods / params
+    k_clusters = 10,
+    knn_k = 15,
+    mst_cut_ratio = 5,
+    mst_k = NULL,
+    sn_window = 40, sn_method = "jw", sn_thresh = 0.12,
+    svd_dim = 100,
+    louvain_min_sim = 0.0,
+    cos_thresh = 0.88,
+    eval_mode = c("labeled_only","singleton_fill"),
+    write_csv = NULL                 # output file path
+)
+
+
+7) Main runner (nice facade)
+er_main <- function(
+    data, truth = NULL,
+    fields = NULL, extra_fields = NULL,
+    id_col = NULL, embed_col = NULL,
+    # method params
+    k_clusters = 10, knn_k = 15,
+    mst_cut_ratio = 5, mst_k = NULL,
+    sn_window = 40, sn_method = "jw", sn_thresh = 0.12,
+    svd_dim = 100, louvain_min_sim = 0.0, cos_thresh = 0.88,
+    eval_mode = "labeled_only",
+    write_csv = NULL, sheet = NULL
+)
+
+
+
+
+
+

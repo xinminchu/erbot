@@ -1,0 +1,16 @@
+Package: erbot
+Title: Entity Resolution Robot
+Version: 0.0.1
+Authors@R: 
+  person("Sam", "Chu", email = "sam.chu@example.com", role = c("aut", "cre"))
+Description: Easy, cost-effective data deduplication with blocking and matching.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Imports:
+  dplyr,
+  stringr
+RoxygenNote: 7.3.2
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
