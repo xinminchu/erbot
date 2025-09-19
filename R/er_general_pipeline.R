@@ -19,7 +19,236 @@
   "readr","readxl","text2vec","Matrix","irlba","stringdist","igraph",
   "FNN","mclust","cluster","scales"
 ))
-`%||%` <- function(a,b) if(!is.null(a)) a else b
+#`%||%` <- function(a,b) if(!is.null(a)) a else b
+
+# ================================
+# er_similarity_multifield helper
+# Includes required similarity functions and top-k pruning
+# ================================
+
+`%||%` <- function(a,b) if (is.null(a) || length(a)==0) b else a
+
+# --- Similarity primitives ---
+.sim_text_lev <- function(a,b){
+  if (is.na(a) || is.na(b) || a=="" || b=="") return(NA_real_)
+  m <- max(nchar(a), nchar(b)); if (m==0) return(NA_real_)
+  1 - stringdist::stringdist(a,b,method="lv")/m
+}
+
+.sim_text_jw <- function(a,b){
+  if (is.na(a) || is.na(b) || a=="" || b=="") return(NA_real_)
+  1 - stringdist::stringdist(a,b,method="jw")
+}
+
+.tokenize <- function(x){
+  x <- tolower(x %||% ""); x <- gsub("[^[:alnum:]]+"," ",x); x <- stringr::str_squish(x)
+  if (identical(x,"")) character(0) else unique(strsplit(x,"\\s+")[[1]])
+}
+
+.sim_text_jacc <- function(a,b){
+  if (is.na(a) || is.na(b) || a=="" || b=="") return(NA_real_)
+  A <- .tokenize(a); B <- .tokenize(b)
+  if (!length(A) && !length(B)) return(NA_real_)
+  inter <- length(intersect(A,B)); uni <- length(union(A,B)); if (uni==0) return(NA_real_)
+  inter/uni
+}
+
+.sim_categorical <- function(a,b){
+  if (is.na(a) || is.na(b)) return(NA_real_)
+  as.numeric(identical(as.character(a), as.character(b)))
+}
+
+.sim_numeric <- function(a,b,range_max,tau=1){
+  if (is.na(a) || is.na(b)) return(NA_real_)
+  if (!is.finite(range_max) || range_max <= 0) return(NA_real_)
+  d <- abs(as.numeric(a) - as.numeric(b)) / range_max
+  exp(-(d / tau))
+}
+
+# --- Keep top-k neighbors per row (symmetric) ---
+.keep_topk_per_row <- function(S, k){
+  n <- nrow(S)
+  ki <- integer(0); kj <- integer(0); kx <- numeric(0)
+  for (i in seq_len(n)) {
+    st <- S@p[i]+1L; en <- S@p[i+1L]; if (en < st) next
+    cols <- S@i[st:en] + 1L; vals <- S@x[st:en]
+    self <- which(cols==i); others <- setdiff(seq_along(cols), self)
+    take <- integer(0)
+    if (length(others)) take <- others[head(order(vals[others], decreasing=TRUE), k)]
+    if (length(self)) take <- c(self, take)
+    ki <- c(ki, rep(i, length(take))); kj <- c(kj, cols[take]); kx <- c(kx, vals[take])
+  }
+  S2 <- Matrix::sparseMatrix(i=c(ki,kj), j=c(kj,ki), x=c(kx,kx), dims=dim(S))
+  diag(S2) <- 1
+  S2
+}
+
+# --- Main function: missing-aware, field-weighted multi-field similarity ---
+# spec: list of lists: list(name=..., type=..., w=..., tau=? for numeric/year)
+# types supported: "lev", "jw", "jaccard", "categorical", "numeric", "year"
+er_similarity_multifield <- function(df, spec, block_key = NULL, top_k = 30) {
+  n <- nrow(df)
+  if (is.null(block_key)) block_key <- rep("ALL", n)
+  # ignore NA block keys explicitly
+  ukeys <- unique(block_key[!is.na(block_key)])
+
+  # precompute numeric ranges safely
+  num_ranges <- list()
+  for (sp in spec) {
+    if (sp$type %in% c("numeric","year")) {
+      vv <- suppressWarnings(as.numeric(df[[sp$name]]))
+      vv <- vv[is.finite(vv)]
+      if (length(vv) >= 2) num_ranges[[sp$name]] <- diff(range(vv)) else num_ranges[[sp$name]] <- NA_real_
+    }
+  }
+
+  I <- integer(0); J <- integer(0); X <- numeric(0)
+
+  for (bk in ukeys) {
+    idx <- which(block_key == bk)  # NA-safe because bk is not NA
+    if (length(idx) <= 1) next
+
+    # iterate only over i < j pairs without generating NA
+    if (length(idx) >= 2) {
+      for (ii in seq_len(length(idx) - 1L)) {
+        i <- idx[ii]
+        js <- idx[(ii+1L):length(idx)]  # guaranteed non-empty here
+        svec <- numeric(length(js))
+        for (kk in seq_along(js)) {
+          j <- js[kk]
+          num <- 0; den <- 0
+          for (sp in spec) {
+            f <- sp$name; w <- sp$w; a <- df[[f]][i]; b <- df[[f]][j]
+            sij <- switch(sp$type,
+                          lev        = .sim_text_lev(a,b),
+                          jw         = .sim_text_jw(a,b),
+                          jaccard    = .sim_text_jacc(a,b),
+                          categorical= .sim_categorical(a,b),
+                          numeric    = .sim_numeric(a,b, num_ranges[[f]], tau=sp$tau %||% 1),
+                          year       = .sim_numeric(a,b, num_ranges[[f]], tau=sp$tau %||% 0.5),
+                          stop("Unknown type: ", sp$type)
+            )
+            if (!is.na(sij)) { num <- num + w*sij; den <- den + w }
+          }
+          s <- if (den>0) num/den else 0
+          svec[kk] <- max(0, min(1, s))
+        }
+        I <- c(I, rep(i, length(js))); J <- c(J, js); X <- c(X, svec)
+      }
+    }
+  }
+
+  # final NA guard (shouldn't be necessary now, but keeps robust)
+  keep <- which(!is.na(I) & !is.na(J) & !is.na(X))
+  if (length(keep) == 0) {
+    S <- Matrix::Diagonal(n = n, x = 1)
+  } else {
+    S <- Matrix::sparseMatrix(i = c(I[keep], J[keep]),
+                              j = c(J[keep], I[keep]),
+                              x = c(X[keep], X[keep]),
+                              dims = c(n, n))
+    diag(S) <- 1
+  }
+
+  if (!is.null(top_k) && top_k > 0) S <- .keep_topk_per_row(S, top_k)
+  S
+}
+
+# --- Optional: Louvain from similarity ---
+# ===============================================
+# SAFE replacement for er_louvain_from_S
+# Avoids using non-existent slots like S@j (dgCMatrix has i, p, x, not j)
+# Builds edges via Matrix::summary(S) which returns (i, j, x) 1-based.
+# ===============================================
+er_louvain_from_S <- function(S, min_sim = 0.0) {
+  stopifnot(inherits(S, "sparseMatrix"))
+  E <- Matrix::summary(S)  # data.frame with cols: i, j, x (1-based)
+  # keep only off-diagonal, above threshold
+  E <- E[E$i != E$j & is.finite(E$x) & !is.na(E$x) & E$x >= min_sim, , drop = FALSE]
+  if (!nrow(E)) return(rep(1L, nrow(S)))
+
+  # Undirected simple graph: keep only i < j to avoid duplicate edges
+  E <- E[E$i < E$j, , drop = FALSE]
+
+  G <- igraph::graph_from_data_frame(E[, c("i","j")], directed = FALSE, vertices = data.frame(name = seq_len(nrow(S))))
+  igraph::E(G)$weight <- E$x
+
+  cl <- igraph::cluster_louvain(G, weights = igraph::E(G)$weight)
+
+  memb <- rep(NA_integer_, nrow(S))
+  # igraph vertex names are character; coerce to integer index
+  v_ids <- as.integer(igraph::V(G)$name)
+  memb[v_ids] <- igraph::membership(cl)
+
+  # Assign isolated vertices (not in any edge) unique cluster IDs
+  if (anyNA(memb)) {
+    maxlab <- if (all(is.na(memb))) 0L else max(memb, na.rm = TRUE)
+    na_idx <- which(is.na(memb))
+    memb[na_idx] <- maxlab + seq_along(na_idx)
+  }
+  memb
+}
+
+
+.er_kmeans_sweep <- function(X_dense, k_grid, seed=123, nstart=10) {
+  # Ensure k are valid
+  k_grid <- sort(unique(k_grid[k_grid >= 2 & k_grid < nrow(X_dense)]))
+  if (length(k_grid) == 0) stop("k_grid has no valid k (>=2 and < n).")
+
+  # L2-normalize rows -> cosine geometry
+  rn <- sqrt(rowSums(X_dense^2))
+  rn[rn == 0] <- 1
+  Z <- X_dense / rn
+
+  best <- list(k = NULL, cl = NULL, score = -Inf)
+
+  for (k in k_grid) {
+    set.seed(seed)
+    cl <- kmeans(Z, centers = k, nstart = nstart)$cluster
+
+    # Compute cluster centers in Z-space and L2-normalize them
+    centers <- rowsum(Z, cl) / as.vector(table(cl))
+    cnorm <- sqrt(rowSums(centers^2))
+    cnorm[cnorm == 0] <- 1
+    centers <- centers / cnorm
+
+    # Cosine to own center
+    cos_self <- rowSums(Z * centers[cl, , drop = FALSE])
+
+    # Cosine to all centers, then take max over "other" centers per row
+    cos_to_all <- Z %*% t(centers)
+    cos_next <- numeric(nrow(Z))
+    for (i in seq_len(nrow(Z))) {
+      # exclude own cluster column
+      cos_next[i] <- max(cos_to_all[i, setdiff(seq_len(k), cl[i])])
+    }
+
+    # Silhouette-like score in cosine space
+    s <- (cos_self - cos_next) / pmax(cos_self, cos_next, 1e-8)
+    s_mean <- mean(s, na.rm = TRUE)
+
+    if (is.finite(s_mean) && s_mean > best$score) {
+      best <- list(k = k, cl = cl, score = s_mean)
+    }
+  }
+  best
+}
+
+.er_eval_external <- function(pred, truth) {
+  out <- list(ARI = NA_real_, Precision = NA_real_, Recall = NA_real_, F1 = NA_real_)
+  if (is.null(truth) || !is.vector(truth) || length(truth) != length(pred)) return(out)
+  if (requireNamespace("aricode", quietly = TRUE))
+    out$ARI <- tryCatch(aricode::ARI(pred, truth), error=function(e) NA_real_)
+  pair_count <- function(labels) { sum(choose(as.numeric(table(labels)), 2)) }
+  cont <- table(pred, truth)
+  TP <- sum(choose(as.numeric(cont), 2))
+  Pp <- pair_count(pred); Pt <- pair_count(truth)
+  prec <- if (Pp == 0) 0 else TP / Pp
+  rec  <- if (Pt == 0) 0 else TP / Pt
+  out$Precision <- prec; out$Recall <- rec; out$F1 <- if ((prec+rec)==0) 0 else 2*prec*rec/(prec+rec)
+  out
+}
+
 
 # ------------------------- Hookups to GCMER / rcode
 er_get_clustering_agreement_fun <- function(){
@@ -215,6 +444,52 @@ er_features_tfidf_svd <- function(text_vec, svd_dim=100){
   set.seed(42); svd_res <- irlba::irlba(Xtf, nv=k_dim)
   svd_res$u %*% diag(svd_res$d)
 }
+
+
+.er_kmeans_sweep <- function(X_dense, k_grid, seed=123, nstart=10) {
+  # Ensure k are valid
+  k_grid <- sort(unique(k_grid[k_grid >= 2 & k_grid < nrow(X_dense)]))
+  if (length(k_grid) == 0) stop("k_grid has no valid k (>=2 and < n).")
+
+  # L2-normalize rows -> cosine geometry
+  rn <- sqrt(rowSums(X_dense^2))
+  rn[rn == 0] <- 1
+  Z <- X_dense / rn
+
+  best <- list(k = NULL, cl = NULL, score = -Inf)
+
+  for (k in k_grid) {
+    set.seed(seed)
+    cl <- kmeans(Z, centers = k, nstart = nstart)$cluster
+
+    # Compute cluster centers in Z-space and L2-normalize them
+    centers <- rowsum(Z, cl) / as.vector(table(cl))
+    cnorm <- sqrt(rowSums(centers^2))
+    cnorm[cnorm == 0] <- 1
+    centers <- centers / cnorm
+
+    # Cosine to own center
+    cos_self <- rowSums(Z * centers[cl, , drop = FALSE])
+
+    # Cosine to all centers, then take max over "other" centers per row
+    cos_to_all <- Z %*% t(centers)
+    cos_next <- numeric(nrow(Z))
+    for (i in seq_len(nrow(Z))) {
+      # exclude own cluster column
+      cos_next[i] <- max(cos_to_all[i, setdiff(seq_len(k), cl[i])])
+    }
+
+    # Silhouette-like score in cosine space
+    s <- (cos_self - cos_next) / pmax(cos_self, cos_next, 1e-8)
+    s_mean <- mean(s, na.rm = TRUE)
+
+    if (is.finite(s_mean) && s_mean > best$score) {
+      best <- list(k = k, cl = cl, score = s_mean)
+    }
+  }
+  best
+}
+
 
 # ------------------------- Core methods
 er_kmeans_from_X <- function(X, k=10, seed=123){ set.seed(seed); stats::kmeans(X, centers=k, nstart=20)$cluster }
@@ -489,6 +764,7 @@ er_gc_top_table <- function(res, top_n=5, metric=NULL){
   ord <- order(gc_curve[[metric]], decreasing=TRUE)
   gc_curve[ord, c("threshold", metric), drop=FALSE] |> utils::head(top_n)
 }
+
 er_save_report_pdf <- function(res, file="er_report.pdf", dataset_name=NULL, top_n=5, metric=NULL, width=11, height=8.5){
   pdf(file=file, width=width, height=height, onefile=TRUE)
   plot.new()
@@ -526,6 +802,93 @@ er_save_report_pdf <- function(res, file="er_report.pdf", dataset_name=NULL, top
   }
   dev.off(); invisible(file)
 }
+
+
+# ===============================================
+# SAFE drop-in: er_save_report_pdf
+# - Avoids vapply length-0 errors by sanitizing all fields to length-1 scalars
+# - Generates a clean PDF using base grid (no rmarkdown dependency)
+# - Works even when external metrics are NA / missing
+# ===============================================
+
+er_save_report_pdf <- function(res, out_path, dataset_name = "ER Report") {
+  # Dependencies
+  if (!requireNamespace("grid", quietly = TRUE)) stop("Package 'grid' is required.")
+  if (!requireNamespace("grDevices", quietly = TRUE)) stop("Package 'grDevices' is required.")
+
+  # ---- helpers ----
+  .ensure1_chr <- function(x, default = "NA") {
+    if (is.null(x) || length(x) == 0) return(default)
+    x <- x[1]
+    if (is.na(x)) return(default)
+    as.character(x)
+  }
+  .ensure1_num <- function(x, digits = 3, default = "NA") {
+    if (is.null(x) || length(x) == 0) return(default)
+    x <- x[1]
+    if (is.na(x)) return(default)
+    fmt <- tryCatch(formatC(as.numeric(x), format = "f", digits = digits), error = function(e) default)
+    if (length(fmt) == 0) default else fmt
+  }
+  .len <- function(x) if (is.null(x)) 0L else length(x)
+
+  # ---- collect safe values ----
+  n <- .len(res$clusters)
+  n_clusters <- if (n > 0) length(unique(res$clusters)) else 0L
+
+  lines <- c(
+    paste0("Dataset: ", .ensure1_chr(dataset_name)),
+    paste0("Chosen method: ", .ensure1_chr(res$chosen)),
+    paste0("k (if applicable): ", .ensure1_chr(res$k %||% NA)),
+    paste0("Records (n): ", .ensure1_chr(n)),
+    paste0("Clusters: ", .ensure1_chr(n_clusters)),
+    "",
+    "External evaluation (if truth provided):",
+    paste0("  ARI: ", .ensure1_num(res$external$ARI)),
+    paste0("  Precision: ", .ensure1_num(res$external$Precision)),
+    paste0("  Recall: ", .ensure1_num(res$external$Recall)),
+    paste0("  F1: ", .ensure1_num(res$external$F1))
+  )
+
+  # cluster size summary
+  if (n > 0) {
+    cs <- sort(table(res$clusters), decreasing = TRUE)
+    topk <- head(cs, 20)
+    lines <- c(lines, "", "Top 20 cluster sizes:", paste0("  ", names(topk), ": ", as.integer(topk)))
+  }
+
+  # field summary
+  if (!is.null(res$summary$fields)) {
+    lines <- c(lines, "", paste0("Fields used: ", paste(res$summary$fields, collapse = ", ")))
+  }
+
+  # ---- draw PDF ----
+  try(dir.create(dirname(out_path), showWarnings = FALSE, recursive = TRUE), silent = TRUE)
+  grDevices::pdf(out_path, width = 8.5, height = 11)
+  on.exit(try(grDevices::dev.off(), silent = TRUE), add = TRUE)
+
+  grid::grid.newpage()
+  y <- 0.95
+  line_h <- 0.03
+
+  # Title
+  ttl <- paste0("Entity Resolution Report — ", .ensure1_chr(dataset_name))
+  grid::grid.text(ttl, x = 0.5, y = y, gp = grid::gpar(fontsize = 18, fontface = "bold"))
+  y <- y - 2*line_h
+
+  # Body
+  for (ln in lines) {
+    if (y < 0.05) {  # new page if needed
+      grid::grid.newpage(); y <- 0.95
+    }
+    grid::grid.text(.ensure1_chr(ln, default=""), x = 0.05, y = y, just = "left",
+                    gp = grid::gpar(fontsize = 11))
+    y <- y - line_h
+  }
+
+  invisible(out_path)
+}
+
 
 # ------------------------- Unified pipeline
 er_unified_pipeline <- function(
@@ -723,48 +1086,117 @@ er_unified_pipeline <- function(
 }
 
 # ------------------------- Facade (simple command)
-er_main <- function(
-    data, truth=NULL, fields=NULL, extra_fields=NULL, id_col=NULL, embed_col=NULL,
-    k_clusters=10, knn_k=15, mst_cut_ratio=5, mst_k=NULL, sn_window=40, sn_method="jw", sn_thresh=0.12,
-    svd_dim=100, louvain_min_sim=0.0, cos_thresh=0.88,
-    gc_thresholds=seq(0.06,0.20,0.02), gc_method="rlf", gc_dist_method="jw",
-    auto_tune=TRUE, tune_metric="adj_rand", k_grid=c(5,10,15,20),
-    eval_mode="labeled_only", write_csv=NULL, sheet=NULL,
-    run_comm_methods=c("walktrap","infomap","fast_greedy","label_prop"),
-    auto_plot=TRUE, show_tables=TRUE, show_progress=TRUE
-){
-  res <- er_unified_pipeline(
-    data=data, truth=truth, sheet=sheet, id_col=id_col, fields=fields, extra_fields=extra_fields,
-    embed_col=embed_col, k_clusters=k_clusters, knn_k=knn_k,
-    mst_cut_ratio=mst_cut_ratio, mst_k=mst_k, sn_window=sn_window, sn_method=sn_method, sn_thresh=sn_thresh,
-    svd_dim=svd_dim, louvain_min_sim=louvain_min_sim, cos_thresh=cos_thresh,
-    gc_thresholds=gc_thresholds, gc_method=gc_method, gc_dist_method=gc_dist_method,
-    auto_tune=auto_tune, tune_metric=tune_metric, k_grid=k_grid,
-    eval_mode=eval_mode, write_csv=write_csv, run_comm_methods=run_comm_methods,
-    show_progress=show_progress
+
+er_main <- function(data,
+                    truth = NULL,
+                    fields = c("title","authors","address"),
+                    k_grid = seq(10, 300, by = 10),
+                    write_csv = NULL,
+                    # alignment knobs
+                    svd_k = 100,
+                    knn_k = 15,
+                    louvain_min_sim = 0.0,
+                    use_methods = c("kmeans_tfidf_svd","louvain_knn","louvain_multifield")) {
+
+  use_methods <- match.arg(use_methods,
+                           c("kmeans_tfidf_svd","louvain_knn","louvain_multifield"),
+                           several.ok = TRUE)
+
+  # Load data
+  df <- if (is.character(data) && file.exists(data)) {
+    read.csv(data, stringsAsFactors = FALSE)
+  } else if (is.data.frame(data)) {
+    data
+  } else {
+    stop("Unsupported 'data' input. Provide a data.frame or a readable file path.")
+  }
+  n <- nrow(df)
+
+  # Concatenate text exactly like original
+  df_text <- er_select_fields(df, id_col = NULL, fields = fields, extra_fields = NULL,
+                              normalize = TRUE, auto_fields = is.null(fields))
+  Xsvd <- er_features_tfidf_svd(df_text$text_for_matching, svd_dim = svd_k)
+
+  # Path 1: KMeans on SVD features
+  km_best <- NULL
+  if ("kmeans_tfidf_svd" %in% use_methods) {
+    km_best <- .er_kmeans_sweep(Xsvd, k_grid)
+  }
+
+  # Path 2: Original Louvain on kNN graph from SVD features
+  lv_knn <- NULL
+  if ("louvain_knn" %in% use_methods) {
+    lv_res <- er_louvain_knn(Xsvd, knn = knn_k, min_sim = louvain_min_sim)
+    lv_knn <- as.integer(lv_res$labels)
+  }
+
+  # Path 3: Optional multi-field (equal weights; jw text, numeric year)
+  lv_multi <- NULL
+  if ("louvain_multifield" %in% use_methods) {
+    spec <- list()
+    if ("title" %in% fields && "title" %in% names(df))   spec <- append(spec, list(list(name="title",   type="jw", w=1)))
+    if ("authors" %in% fields && "authors" %in% names(df)) spec <- append(spec, list(list(name="authors", type="jw", w=1)))
+    if ("address" %in% fields && "address" %in% names(df)) spec <- append(spec, list(list(name="address", type="jw", w=1)))
+    if ("year" %in% names(df)) spec <- append(spec, list(list(name="year", type="year", w=1, tau=0.5)))
+
+    blk <- if ("title" %in% names(df)) { tolower(substr(df$title %||% "", 1, 1)) } else { rep("ALL", n) }
+    S <- er_similarity_multifield(df, spec = spec, block_key = blk, top_k = knn_k)
+    lv_multi <- er_louvain_from_S(S, min_sim = louvain_min_sim)
+  }
+
+  # Collect candidates
+  cand <- list()
+  if (!is.null(km_best)) {
+    ev <- .er_eval_external(km_best$cl, truth)
+    cand$kmeans_tfidf_svd <- list(name="kmeans_tfidf_svd", cl=km_best$cl, k=km_best$k,
+                                  score_ext = ev, score_int = km_best$score)
+  }
+  if (!is.null(lv_knn)) {
+    ev <- .er_eval_external(lv_knn, truth)
+    cand$louvain_knn <- list(name="louvain_knn", cl=lv_knn, k=NA_integer_,
+                             score_ext = ev, score_int = NA_real_)
+  }
+  if (!is.null(lv_multi)) {
+    ev <- .er_eval_external(lv_multi, truth)
+    cand$louvain_multifield <- list(name="louvain_multifield", cl=lv_multi, k=NA_integer_,
+                                    score_ext = ev, score_int = NA_real_)
+  }
+
+  if (length(cand) == 0) stop("No methods ran. Check inputs or 'use_methods'.")
+
+  pick <- NULL
+  if (!is.null(truth)) {
+    scores <- sapply(cand, function(x) c(ARI = x$score_ext$ARI %||% -Inf,
+                                         F1  = x$score_ext$F1  %||% -Inf))
+    ord <- order(scores["ARI",], scores["F1",], decreasing = TRUE, na.last = TRUE)
+    pick <- cand[[ord[1]]]
+  } else {
+    if (!is.null(cand$kmeans_tfidf_svd)) pick <- cand$kmeans_tfidf_svd
+    else if (!is.null(cand$louvain_knn)) pick <- cand$louvain_knn
+    else pick <- cand$louvain_multifield
+  }
+
+  pred <- pick$cl
+  outdf <- data.frame(row_id = seq_len(n), cluster = as.integer(pred))
+
+  if (!is.null(write_csv)) {
+    idcol <- intersect(c("id","ID","Id","record_id"), names(df))
+    if (length(idcol)) outdf[[idcol[1]]] <- df[[idcol[1]]]
+    keep <- intersect(fields, names(df))
+    outdf <- cbind(outdf, df[keep])
+    utils::write.csv(outdf, write_csv, row.names = FALSE)
+  }
+
+  list(
+    clusters = as.integer(pred),
+    chosen = pick$name,
+    k = pick$k,
+    external = pick$score_ext,
+    internal = pick$score_int,
+    summary = list(n = n, fields = fields, used_methods = names(cand))
   )
-  if (isTRUE(show_tables)) {
-    cat("\n===== Selected Parameters =====\n")
-    print(list(
-      kmeans_k = res$tuning$kmeans_k,
-      hclust_k = res$tuning$hclust_k,
-      pam_k    = res$tuning$pam_k,
-      gc_best_threshold = res$tuning$gc_best_threshold
-    ))
-  }
-  if (isTRUE(auto_plot))   er_autoplot_tuning(res)
-  if (isTRUE(show_tables)) {
-    cat("\n===== Tuning tables (top 5) =====\n")
-    if (!is.null(res$tuning$gc_threshold_curve)) {
-      gc_curve <- res$tuning$gc_threshold_curve
-      metric <- er_pick_gc_metric(gc_curve, fallback_metric = (res$details$params$tune_metric %||% "adj_rand"))
-      ord <- order(gc_curve[[metric]], decreasing=TRUE)
-      print(utils::head(gc_curve[ord, c("threshold", metric), drop=FALSE], 5))
-    }
-    if (!is.null(res$performance)) print(res$performance)
-  }
-  invisible(res)
 }
+
 
 # ============================
 #  A) Internal-quality toolkit
@@ -1095,4 +1527,10 @@ er_compare_methods_unsupervised <- function(
                   gc = gc$curve, embed_knn = if (!is.null(embknn)) embknn$curve else NULL),
     fields_used = colnames(df_text)[2]
   )
+}
+
+
+.sim_text_jw <- function(a,b){
+  if (is.na(a) || is.na(b) || a=="" || b=="") return(NA_real_)
+  1 - stringdist::stringdist(a,b,method="jw")
 }
