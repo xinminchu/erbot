@@ -5,9 +5,9 @@ library(devtools)
 devtools::install_github("https://github.com/ddegras/GCMER")
 
 library(GCMER)
-#source(file.path("D:/erbot/R", "er_general_pipeline.R"))
+source(file.path("D:/erbot/R", "er_general_pipeline.R"))
 #source(file.path("D:/erbot/R", "er_pipeline.R"))
-source(file.path("D:/erbot/R", "er_pipeline_weighted_fields.R"))
+#source(file.path("D:/erbot/R", "er_pipeline_weighted_fields.R"))
 
 # 1) CORA
 library(cora); library(igraph)
@@ -28,14 +28,42 @@ res_cora <- er_main(
 
 er_save_report_pdf(res_cora, "D:/erbot/results/cora_report0918.pdf", "CORA")
 
+
+res <- er_main(
+  data = "cora",                 # or a CSV/XLSX path / data.frame
+  truth = cora_gold,             # optional
+  fields = c("title","authors","address"),
+  k_grid = seq(10, 300, by = 10),
+  write_csv = "D:/erbot/data/cora_only_kmeans.csv",
+  er_methods = "kmeans",         # <<< run only KMeans
+  auto_plot = FALSE
+)
+
+
 ###########################################################
 # CORA without truth (unsupervised selection on titles)
 ###########################################################
 sel <- er_compare_methods_unsupervised(
   data = cora,
+  fields = c("title","authors","address","date","year"),
+  objective = "silhouette",
+  k_grid = 1000,          # fine: the sweep caps to n_unique
+  er_method = "kmeans",
+  show_progress = TRUE
+)
+
+
+
+
+
+
+
+sel <- er_compare_methods_unsupervised(
+  data = cora,
   fields = c("title","authors","address", "date", "year"), #get less missing
   objective = "silhouette",                       # or "silhouette", "modularity", ...
-  k_grid = seq(10, 500, by = 10),
+  k_grid = 1000,
+  use_methods = "kmeans",
   knn_grid = seq(10, 500, by = 10),
   min_sim_grid = c(0.0, 0.05, 0.1),
   gc_thresholds = seq(0.01, 0.8, 0.02),
@@ -248,7 +276,7 @@ res_cora <- er_main(
   write_csv = "D:/erbot/data/cora_clean_pred_imp.csv"
 )
 
-# Total elapsed: 1798.5s
+# Total elapsed: 2205.7s
 er_save_report_pdf(res_cora, "D:/erbot/results/cora_report2025091806.pdf", "CORA")
 
 
