@@ -3,7 +3,7 @@ Title: ERBOT: Entity Resolution Pipeline and Utilities
 Version: 0.1.0
 Authors@R: 
     c(person("Xinmin", "Chu", , "Xinmin.Chu001@umb.edu", role = c("aut", "cre"),
-           comment = c(ORCID = "YOUR-ORCID-ID")),
+           comment = c(ORCID = "0000-0001-5140-3852")),
     person("David", "Degras-Valabregue", , "david.degras@umb.edu", role = "aut",
            comment = c(ORCID = "YOUR-ORCID-ID")),
     person(given = "Forest", family = "Fang", role = "aut",
@@ -40,7 +40,8 @@ Imports:
     grid,
     grDevices,
     gridExtra,
-    scales
+    scales,
+    magrittr
 Suggests:
     mclust,
     aricode,

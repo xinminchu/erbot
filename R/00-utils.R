@@ -1,3 +1,7 @@
+#' @importFrom magrittr %>%
+NULL
+
+
 #' Internal utility: Null-coalescing
 #' @keywords internal
 `%||%` <- function(a, b) if (!is.null(a)) a else b
