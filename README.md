@@ -172,3 +172,4 @@ MIT — see LICENSE.
 Contributing
 
 Issues and pull requests are welcome. Ideas for next features: HDBSCAN, MinHash/LSH blocking, approximate nearest neighbors for large-scale kNN.
+
