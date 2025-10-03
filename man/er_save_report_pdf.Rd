@@ -2,7 +2,7 @@
 % Please edit documentation in R/11-reporting.R
 \name{er_save_report_pdf}
 \alias{er_save_report_pdf}
-\title{Save an organized ER PDF report (no Rmd)}
+\title{Save an organized ER PDF report (backward-compatible, no Rmd)}
 \usage{
 er_save_report_pdf(
   res,
@@ -14,25 +14,18 @@ er_save_report_pdf(
 )
 }
 \arguments{
-\item{res}{List-like ER result object from \code{er_main()}.
-Tries to use: \code{res$performance}, \code{res$agreement}, \code{res$curves},
-\code{res$top_items}, and common metadata like \code{res$fields} or
-\code{res$params$fields}, \code{res$best}, etc. All are optional.}
+\item{res}{ER result from er_main() or similar. Handles old/new field layouts.}
 
-\item{file}{Output PDF filepath.}
+\item{file}{Output PDF path.}
 
-\item{dataset_name}{Label for the dataset.}
+\item{dataset_name}{Title label.}
 
-\item{top_n}{How many top items to show if available.}
+\item{top_n}{Top items to show if res$top_items present.}
 
-\item{digits}{Decimal places for numeric printing.}
+\item{digits}{Rounding for numbers.}
 
-\item{runtime_sec}{Optional elapsed time in seconds to display on the cover.}
-}
-\value{
-(Invisibly) the output path.
+\item{runtime_sec}{Optional total runtime in seconds.}
 }
 \description{
-Creates a multi-page PDF report with a cover, clean metric tables (rounded),
-optional curves, and basic run metadata. No R Markdown is used.
+Save an organized ER PDF report (backward-compatible, no Rmd)
 }
