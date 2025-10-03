@@ -2,25 +2,39 @@
 % Please edit documentation in R/11-reporting.R
 \name{er_save_report_pdf}
 \alias{er_save_report_pdf}
-\title{Save a PDF report for a pipeline result}
+\title{Save an ER PDF report (rounded metrics + runtime)}
 \usage{
 er_save_report_pdf(
   res,
-  file = "er_report.pdf",
-  dataset_name = NULL,
+  file,
+  dataset_name = "DATASET",
   top_n = 5,
-  metric = NULL,
-  width = 11,
-  height = 8.5
+  digits = 5,
+  runtime_sec = NULL
 )
 }
 \arguments{
-\item{res}{result list returned by \link{er_unified_pipeline}}
+\item{res}{List-like ER result object from \code{er_main()}.}
 
-\item{file}{output pdf path}
+\item{file}{Character. Output PDF path.}
 
-\item{dataset_name}{character}
+\item{dataset_name}{Character. Dataset label.}
+
+\item{top_n}{Integer. Number of top items to show if available.}
+
+\item{digits}{Integer. Decimal places for numeric columns (default 5).}
+
+\item{runtime_sec}{Numeric or NULL. If provided, runtime in seconds will be printed.}
+}
+\value{
+Invisibly returns the output file path.
 }
 \description{
-Save a PDF report for a pipeline result
+Create a PDF report with overview info, runtime, and performance tables.
+This version does not use R Markdown, only base graphics + grid.
+}
+\examples{
+\dontrun{
+er_save_report_pdf(res, "cora_report.pdf", dataset_name="CORA", top_n=5, digits=5)
+}
 }

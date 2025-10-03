@@ -103,45 +103,185 @@ er_gc_top_table <- function(res, top_n=5, metric=NULL){
   utils::head(gc_curve[ord, c("threshold", metric), drop=FALSE], top_n)
 }
 
-#' Save a PDF report for a pipeline result
-#' @param res result list returned by [er_unified_pipeline]
-#' @param file output pdf path
-#' @param dataset_name character
+
+#' Save an ER PDF report (rounded metrics + runtime)
+#'
+#' Create a PDF report with overview info, runtime, and performance tables.
+#' This version does not use R Markdown, only base graphics + grid.
+#'
+#' @param res List-like ER result object from \code{er_main()}.
+#' @param file Character. Output PDF path.
+#' @param dataset_name Character. Dataset label.
+#' @param top_n Integer. Number of top items to show if available.
+#' @param digits Integer. Decimal places for numeric columns (default 5).
+#' @param runtime_sec Numeric or NULL. If provided, runtime in seconds will be printed.
+#'
+#' @return Invisibly returns the output file path.
+#'
+#' @examples
+#' \dontrun{
+#' er_save_report_pdf(res, "cora_report.pdf", dataset_name="CORA", top_n=5, digits=5)
+#' }
 #' @export
-er_save_report_pdf <- function(res, file="er_report.pdf", dataset_name=NULL, top_n=5, metric=NULL, width=11, height=8.5){
-  grDevices::pdf(file=file, width=width, height=height, onefile=TRUE)
-  plot.new()
-  ttl <- if (is.null(dataset_name)) "Entity Resolution Report" else paste("Entity Resolution Report —", dataset_name)
-  title(main=ttl, cex.main=1.4, font.main=2)
-  mtext(paste("Generated:", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), side=3, line=0.5, cex=0.8, adj=1)
-  text(0,0.85,paste0("Records: ", res$details$n), adj=c(0,0.5), cex=1)
-  text(0,0.80,paste0("Embeddings detected: ", ifelse(res$details$has_embeddings,"yes","no")), adj=c(0,0.5), cex=1)
-  text(0,0.74,"Methods included:", adj=c(0,0.5), cex=1)
-  meths <- grep("^pred_", names(res$predictions), value=TRUE)
-  text(0.02,0.68,paste("•", sub("^pred_","",meths), collapse="\n• "), adj=c(0,1), cex=0.9)
-
-  er_draw_table(er_params_df(res), title="Selected Parameters")
-  er_autoplot_tuning(res)
-
-  gc_curve <- res$tuning$gc_threshold_curve
-  if (!is.null(gc_curve)) {
-    plot.new(); par(new=TRUE)
-    metric_use <- er_pick_gc_metric(gc_curve, fallback_metric = (metric %||% res$details$params$tune_metric %||% "adj_rand"))
-    er_plot_curve(gc_curve,"threshold",metric_use, sprintf("GC tuning — %s vs threshold", metric_use), "threshold", metric_use)
-    top_gc <- er_gc_top_table(res, top_n=top_n, metric=metric)
-    if (!is.null(top_gc)) er_draw_table(top_gc, title=sprintf("GC tuning (top %d by %s)", top_n, names(top_gc)[2]))
+er_save_report_pdf <- function(res,
+                               file,
+                               dataset_name = "DATASET",
+                               top_n        = 5,
+                               digits       = 5,
+                               runtime_sec  = NULL) {
+  if (!requireNamespace("gridExtra", quietly = TRUE)) {
+    stop("Package 'gridExtra' is required. Install with install.packages('gridExtra').")
+  }
+  if (!requireNamespace("grid", quietly = TRUE)) {
+    stop("Package 'grid' is required. Install with install.packages('grid').")
   }
 
-  if (!is.null(res$performance) && nrow(res$performance)) {
-    perf <- res$performance
-    cols_order <- unique(c("Method","adj_rand","rand","jaccard","F_measure","fowlkes_mallow",
-                           "tpr","fpr","mutual_info.MI","mutual_info.G","mutual_info.FJ","mutual_info.VI",
-                           setdiff(names(perf), c("Method","adj_rand","rand","jaccard","F_measure","fowlkes_mallow","tpr","fpr",
-                                                  "mutual_info.MI","mutual_info.SG","mutual_info.FJ","mutual_info.VI"))))
-    perf <- perf[, intersect(cols_order, names(perf)), drop=FALSE]
-    chunk_size <- 8
-    col_blocks <- split(seq_along(perf), ceiling(seq_along(perf)/chunk_size))
-    for (blk in col_blocks) er_draw_table(perf[, blk, drop=FALSE], title="Clustering Agreement — Performance")
+  # helper to round numeric cols
+  round_num <- function(df, d) {
+    if (!is.data.frame(df)) return(df)
+    num_cols <- vapply(df, is.numeric, TRUE)
+    if (any(num_cols)) df[num_cols] <- lapply(df[num_cols], round, d)
+    df
   }
-  grDevices::dev.off(); invisible(file)
+
+  # rounded copy for display
+  res_disp <- res
+  if (!is.null(res_disp$performance)) res_disp$performance <- round_num(res_disp$performance, digits)
+  if (!is.null(res_disp$agreement))   res_disp$agreement   <- round_num(res_disp$agreement, digits)
+  if (!is.null(res_disp$curves)) {
+    res_disp$curves <- lapply(res_disp$curves, round_num, d = digits)
+  }
+
+  # prepare header text
+  header_lines <- c(
+    paste("Dataset:", dataset_name),
+    paste("Generated at:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
+  )
+  if (!is.null(runtime_sec)) {
+    header_lines <- c(header_lines, sprintf("Total runtime: %.2f sec", runtime_sec))
+  }
+
+  # create PDF
+  grDevices::pdf(file, width = 8.5, height = 11)
+  grid::grid.newpage()
+  grid::grid.text(paste(header_lines, collapse = "\n"),
+                  x = 0.05, y = 0.95, just = c("left","top"),
+                  gp = grid::gpar(fontsize = 12, fontface = "bold"))
+
+  y_pos <- 0.85
+
+  # add performance table
+  if (!is.null(res_disp$performance)) {
+    grid::grid.text("Clustering Agreement — Performance", x=0.05, y=y_pos, just=c("left","top"),
+                    gp=grid::gpar(fontsize=11, fontface="bold"))
+    y_pos <- y_pos - 0.05
+    gridExtra::grid.table(res_disp$performance, rows=NULL, theme=gridExtra::ttheme_default(), vp=grid::viewport(y=y_pos, height=0.2))
+    y_pos <- y_pos - 0.25
+  }
+
+  # add agreement table
+  if (!is.null(res_disp$agreement)) {
+    grid::grid.text("Agreement Details", x=0.05, y=y_pos, just=c("left","top"),
+                    gp=grid::gpar(fontsize=11, fontface="bold"))
+    y_pos <- y_pos - 0.05
+    gridExtra::grid.table(res_disp$agreement, rows=NULL, theme=gridExtra::ttheme_default(), vp=grid::viewport(y=y_pos, height=0.2))
+    y_pos <- y_pos - 0.25
+  }
+
+  # add curves (first few rows of each)
+  if (!is.null(res_disp$curves)) {
+    for (nm in names(res_disp$curves)) {
+      tb <- res_disp$curves[[nm]]
+      if (is.data.frame(tb)) {
+        grid::grid.text(paste("Method Curve:", nm), x=0.05, y=y_pos, just=c("left","top"),
+                        gp=grid::gpar(fontsize=11, fontface="bold"))
+        y_pos <- y_pos - 0.05
+        gridExtra::grid.table(utils::head(tb, 10), rows=NULL, theme=gridExtra::ttheme_default(),
+                              vp=grid::viewport(y=y_pos, height=0.2))
+        y_pos <- y_pos - 0.25
+      }
+    }
+  }
+
+  # add top items if available
+  if (!is.null(res_disp$top_items)) {
+    grid::grid.text(sprintf("Top %d items", top_n), x=0.05, y=y_pos, just=c("left","top"),
+                    gp=grid::gpar(fontsize=11, fontface="bold"))
+    y_pos <- y_pos - 0.05
+    gridExtra::grid.table(utils::head(res_disp$top_items, top_n), rows=NULL,
+                          theme=gridExtra::ttheme_default(),
+                          vp=grid::viewport(y=y_pos, height=0.2))
+  }
+
+  grDevices::dev.off()
+
+  invisible(file)
+}
+
+
+
+#' Generate a timestamped filename
+#'
+#' Creates a filename with the current date-time as `YYYYMMDDHHMMSS`.
+#' Optionally appends three random digits to reduce collision.
+#'
+#' @param prefix Character. Prefix for the file name (default: "cora_report").
+#' @param ext Character. File extension (default: "pdf").
+#' @param random Logical. Whether to append three random digits (default: FALSE).
+#'
+#' @return A character string with the generated filename.
+#' @examples
+#' make_timestamp_filename()
+#' make_timestamp_filename("results", "csv")
+#' make_timestamp_filename("report", "pdf", random = TRUE)
+#'
+#' @export
+make_timestamp_filename <- function(prefix = "cora_report", ext = "pdf", random = FALSE) {
+  ts <- format(Sys.time(), "%Y%m%d%H%M%S")
+  if (random) {
+    r3 <- sprintf("%03d", sample(0:999, 1))
+    fname <- paste0(prefix, "_", ts, "_", r3, ".", ext)
+  } else {
+    fname <- paste0(prefix, "_", ts, ".", ext)
+  }
+  return(fname)
+}
+
+#' Write performance/agreement table to CSV/TXT (rounded)
+#'
+#' Saves a performance (or clustering agreement) data frame to `.csv` or `.txt`
+#' with numeric columns rounded to a fixed number of decimal places.
+#'
+#' @param x A data.frame/tibble with performance or agreement metrics.
+#' @param file Character path ending in .csv or .txt.
+#' @param digits Integer number of decimal places to round numeric columns (default 5).
+#' @param ... Passed to \code{utils::write.csv} or \code{utils::write.table}.
+#'
+#' @return (Invisibly) the rounded data.frame.
+#' @examples
+#' \dontrun{
+#'   perf <- res$performance %||% res$agreement
+#'   er_write_performance(perf, "results/perf_agreement.txt")
+#'   er_write_performance(perf, "results/perf_agreement.csv", digits = 4)
+#' }
+#' @importFrom tools file_ext
+#' @export
+er_write_performance <- function(x, file, digits = 5, ...) {
+  stopifnot(is.data.frame(x), is.character(file), length(file) == 1)
+  round_num <- function(df, d) {
+    num_cols <- vapply(df, is.numeric, TRUE)
+    if (any(num_cols)) df[num_cols] <- lapply(df[num_cols], round, d)
+    df
+  }
+  x_round <- round_num(x, digits)
+
+  ext <- tolower(tools::file_ext(file))
+  if (ext == "csv") {
+    utils::write.csv(x_round, file = file, row.names = FALSE, ...)
+  } else if (ext == "txt") {
+    utils::write.table(x_round, file = file, sep = "\t", row.names = FALSE, quote = FALSE, ...)
+  } else {
+    stop("Unsupported file extension: ", ext, " (use .csv or .txt)")
+  }
+  invisible(x_round)
 }
