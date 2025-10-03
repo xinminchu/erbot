@@ -3,9 +3,9 @@ remotes::install_git("https://github.com/xinminchu/erbot.git", upgrade = "never"
 library(erbot)
 packageVersion("erbot")
 
-library(erbot)
 exists("er_main")
-
+exists("run_cora")
+exists("run_affiliation")
 
 
 
@@ -36,11 +36,15 @@ res_cora <- run_cora(fields_cora = fields_cora,
 out_dir <- "D:/erbot/outputs"
 
 # input files
-data_path  <- "D:/erbot/data/affiliationstrings_ids.csv"
+#data_path  <- "D:/erbot/data/affiliationstrings_ids.csv"
+data_path  <- "D:/erbot/data/clean_affiliations_2024_05_15.csv"
+
 truth_path <- "D:/erbot/data/affiliationstrings_mapping.csv"   # or NULL
 
 # which fields to use (adjust to your columns)
-fields_affil <- c("affil1")   # or c("affil1","affil2") if you parsed more
+#fields_affil <- c("affil1")   # or c("affil1","affil2") if you parsed more
+
+fields_affil <- c("Name1", "Name2",	"Name3",	"Street1",	"Street2",	"City",	"State",	"Zipcode",	"Country")
 
 # dynamic filename for the rounded performance table
 save_perf_file <- file.path(
