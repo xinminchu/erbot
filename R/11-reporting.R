@@ -125,7 +125,6 @@ er_save_report_pdf <- function(res,
     stop("Please install 'grid'.")
   has_gg <- requireNamespace("ggplot2", quietly = TRUE)
 
-  # ---------- helpers ----------
   get_or <- function(x, default = NULL) if (is.null(x)) default else x
   round_num <- function(df, d) {
     if (!is.data.frame(df)) return(df)
@@ -140,21 +139,15 @@ er_save_report_pdf <- function(res,
     NA_character_
   }
 
-  # Convert various performance/agreement shapes to a data.frame (methods x metrics)
   as_metric_table <- function(x, digits = 5, prefer_method_col = TRUE) {
     if (is.null(x)) return(NULL)
-
-    # Already a data.frame?
     if (is.data.frame(x)) {
       out <- round_num(x, digits)
-      # Ensure a "Method" column if rownames carry it
       if (prefer_method_col && !"Method" %in% names(out) && !is.null(rownames(out))) {
         out <- cbind(Method = rownames(out), out, row.names = NULL)
       }
       return(out)
     }
-
-    # Matrix with rownames as methods
     if (is.matrix(x)) {
       out <- as.data.frame(x, stringsAsFactors = FALSE)
       if (!"Method" %in% names(out) && !is.null(rownames(out))) {
@@ -162,37 +155,27 @@ er_save_report_pdf <- function(res,
       }
       return(round_num(out, digits))
     }
-
-    # Named numeric vector -> 1-row table
     if (is.numeric(x) && !is.null(names(x))) {
       out <- as.data.frame(as.list(x), stringsAsFactors = FALSE)
       out <- round_num(out, digits)
       return(out)
     }
-
-    # List of per-method named numeric vectors
     if (is.list(x)) {
-      # Detect shape: method -> named metrics
       ok <- vapply(x, function(el) is.numeric(el) && !is.null(names(el)), TRUE)
       if (length(ok) && all(ok)) {
         methods <- names(x)
         metrics <- unique(unlist(lapply(x, names)))
         df <- data.frame(Method = methods, check.names = FALSE)
-        for (m in metrics) {
-          df[[m]] <- vapply(x, function(el) get_or(el[[m]], NA_real_), numeric(1))
-        }
+        for (m in metrics) df[[m]] <- vapply(x, function(el) get_or(el[[m]], NA_real_), numeric(1))
         return(round_num(df, digits))
       }
     }
-
-    # Fallback: try to coerce safely; if not, return NULL
     tryCatch({
       out <- as.data.frame(x, stringsAsFactors = FALSE)
       round_num(out, digits)
     }, error = function(e) NULL)
   }
 
-  # Split a data.frame into pages with max rows per page
   split_pages <- function(df, rows_per_page = 30) {
     n <- nrow(df)
     if (is.null(n) || n == 0) return(list(df))
@@ -200,7 +183,6 @@ er_save_report_pdf <- function(res,
     lapply(idx, function(ii) df[ii, , drop = FALSE])
   }
 
-  # Simple grid drawing helpers
   new_page   <- function() grid::grid.newpage()
   title_grob <- function(text, y = 0.95, size = 14) {
     grid::grid.text(text, x = 0.05, y = y, just = c("left","top"),
@@ -213,42 +195,30 @@ er_save_report_pdf <- function(res,
   draw_table <- function(df, y, height = 0.75) {
     tg <- gridExtra::tableGrob(df, rows = NULL)
     grid::pushViewport(grid::viewport(x = 0.5, y = y, width = 0.9, height = height))
+    on.exit(grid::popViewport(), add = TRUE)  # // CHANGED: ensure matching pop
     grid::grid.draw(tg)
-    grid::popViewport()
   }
 
-  # ---------- metadata (backward-compatible) ----------
-  # fields
   fields_used <- paste_fields(
     get_or(res$fields,
            get_or(get_or(res$params$fields, NULL),
                   get_or(get_or(res$details$fields, NULL),
                          get_or(get_or(res$details$params$fields, NULL), NULL)))))
-
-  # record count
   n_records <- get_or(res$n_records,
                       get_or(NROW(get_or(res$data, NULL)),
                              get_or(get_or(res$details$n, NULL),
-                                    get_or(length(get_or(res$ids, NULL)),
-                                           NA))))
-
-  # clusters (best guess)
+                                    get_or(length(get_or(res$ids, NULL)), NA))))
   n_clusters <- NA
-  if (!is.null(res$clusters))            n_clusters <- length(unique(res$clusters))
-  if (!is.null(res$labels))              n_clusters <- length(unique(res$labels))
-  if (!is.null(res$best$clusters))       n_clusters <- length(unique(res$best$clusters))
-  if (!is.null(res$best$labels))         n_clusters <- length(unique(res$best$labels))
-
-  # embeddings flag (best effort)
+  if (!is.null(res$clusters))      n_clusters <- length(unique(res$clusters))
+  if (!is.null(res$labels))        n_clusters <- length(unique(res$labels))
+  if (!is.null(res$best$clusters)) n_clusters <- length(unique(res$best$clusters))
+  if (!is.null(res$best$labels))   n_clusters <- length(unique(res$best$labels))
   has_embeddings <- get_or(
     get_or(res$details$has_embeddings, NULL),
     !is.null(get_or(get_or(res$features$embeddings, NULL), get_or(res$embeddings, NULL)))
   )
-
-  # runtime
   runtime_sec <- get_or(runtime_sec, get_or(res$runtime_sec, get_or(res$details$total_runtime, NULL)))
 
-  # selected params (collect from several places)
   param_sources <- list(
     get_or(res$selected_params, NULL),
     get_or(res$params, NULL),
@@ -257,7 +227,6 @@ er_save_report_pdf <- function(res,
   params_list <- Filter(Negate(is.null), param_sources)
   params_tbl  <- NULL
   if (length(params_list)) {
-    # flatten named scalars only
     flat <- list()
     for (ps in params_list) {
       scalars <- ps[vapply(ps, function(v) is.atomic(v) && length(v) == 1, TRUE)]
@@ -269,7 +238,6 @@ er_save_report_pdf <- function(res,
         Value     = vapply(flat, as.character, character(1)),
         row.names = NULL, check.names = FALSE
       )
-      # keep a few high-signal params first if present
       key_first <- c("kmeans_k","hclust_k","pam_k","gc_best_threshold","knn_k",
                      "svd_dim","louvain_min_sim","cos_thresh","sn_window",
                      "sn_method","sn_thresh","gc_method","gc_dist_method",
@@ -279,52 +247,49 @@ er_save_report_pdf <- function(res,
     }
   }
 
-  # ---------- tables & curves ----------
   perf_tbl <- as_metric_table(get_or(res$performance, NULL), digits = digits)
   agr_tbl  <- as_metric_table(get_or(res$agreement,  NULL), digits = digits)
 
-  # Curves: prefer res$curves (list of data.frames). Fallback to classic GC threshold curve.
+  # ---------- Curves -> Grobs (no base graphics, no print()) ----------
   curve_list <- list()
   if (is.list(res$curves)) {
     curve_list <- res$curves
   } else {
     gc_curve <- get_or(res$tuning$gc_threshold_curve, NULL)
-    if (is.data.frame(gc_curve)) {
-      curve_list <- list(GC_threshold = gc_curve)
-    }
+    if (is.data.frame(gc_curve)) curve_list <- list(GC_threshold = gc_curve)
   }
 
-  make_curve_plot <- function(tb, title) {
+  # // CHANGED: return a grob instead of a ggplot object; draw with grid.draw()
+  make_curve_grob <- function(tb, title) {
     if (!has_gg || !is.data.frame(tb)) return(NULL)
-    # Choose reasonable x/y
     xcol <- intersect(c("k","knn","min_sim","embed_k","gc_threshold","n_clusters","step","threshold"), names(tb))
     xcol <- get_or(xcol[1], NULL)
     ycands <- c("silhouette","modularity","ch","db","gap","ari","f1","precision","recall",
                 "adj_rand","rand","jaccard","F_measure","fowlkes_mallow")
-    ycol <- intersect(ycands, names(tb))
-    ycol <- get_or(ycol[1], NULL)
+    ycol <- intersect(ycands, names(tb)); ycol <- get_or(ycol[1], NULL)
     if (is.null(xcol) || is.null(ycol)) {
-      # fallback: first two numeric columns
       num_cols <- names(tb)[vapply(tb, is.numeric, TRUE)]
       if (length(num_cols) >= 2) { xcol <- num_cols[1]; ycol <- num_cols[2] } else { return(NULL) }
     }
     tb <- round_num(tb, digits)
-    ggplot2::ggplot(tb, ggplot2::aes_string(x = xcol, y = ycol)) +
+    p <- ggplot2::ggplot(tb, ggplot2::aes_string(x = xcol, y = ycol)) +
       ggplot2::geom_line() + ggplot2::geom_point() +
       ggplot2::labs(title = title, x = xcol, y = ycol)
+    gg <- ggplot2::ggplotGrob(p)  # <- grob, not a plot
+    gg
   }
 
-  curve_plots <- list()
+  curve_grobs <- list()
   if (length(curve_list)) {
     for (nm in names(curve_list)) {
-      p <- make_curve_plot(curve_list[[nm]], nm)
-      if (!is.null(p)) curve_plots[[nm]] <- p
+      g <- make_curve_grob(curve_list[[nm]], nm)
+      if (!is.null(g)) curve_grobs[[nm]] <- g
     }
   }
 
-  # ---------- render ----------
+  # ---------- Render (all grid; no base plotting) ----------
   dir.create(dirname(file), recursive = TRUE, showWarnings = FALSE)
-  grDevices::pdf(file, width = 8.5, height = 11)
+  grDevices::pdf(file, width = 8.5, height = 11, onefile = TRUE)  # // CHANGED: explicit onefile=TRUE
 
   # Cover
   new_page()
@@ -365,13 +330,13 @@ er_save_report_pdf <- function(res,
     }
   }
 
-  # Curves
-  if (length(curve_plots)) {
-    for (nm in names(curve_plots)) {
+  # Curves (as grobs)
+  if (length(curve_grobs)) {
+    for (nm in names(curve_grobs)) {
       new_page(); title_grob("Method Curves", y = 0.96)
-      grid::pushViewport(grid::viewport(x = 0.5, y = 0.5, width = 0.9, height = 0.8))
-      print(curve_plots[[nm]])
-      grid::popViewport()
+      grid::pushViewport(grid::viewport(x = 0.5, y = 0.47, width = 0.9, height = 0.82))  # // CHANGED
+      on.exit(grid::popViewport(), add = TRUE)                                           # // CHANGED
+      grid::grid.draw(curve_grobs[[nm]])                                                 # // CHANGED
     }
   }
 
