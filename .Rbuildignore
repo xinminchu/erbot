@@ -2,3 +2,15 @@
 ^renv\.lock$
 ^erbot\.Rproj$
 ^\.Rproj\.user$
+^README\.Rmd$
+^Literature/
+^data/
+^dev/
+^Docs/
+^.*[.]pdf$
+^.*[.]Rproj$
+^\.Rproj\.user$
+^\.git$
+^\.github/
+^README[.]Rmd$
+^data-raw/
