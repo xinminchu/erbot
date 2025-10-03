@@ -89,3 +89,110 @@ er_embed_knn <- function(emb_mat, k=15, cos_thresh=0.88){
   } else { g <- igraph::make_empty_graph(n = nrow(X)); igraph::V(g)$name <- as.character(seq_len(nrow(X))) }
   memb_valid <- igraph::components(g)$membership; out[valid] <- as.integer(memb_valid); out
 }
+
+# Imports you’ll need in DESCRIPTION:
+# Imports:
+#   igraph,
+#   FNN,
+#   mclust
+
+suppressPackageStartupMessages({
+  library(igraph)
+  library(FNN)     # fast kNN
+  library(mclust)  # ARI
+})
+
+# --- Cosine helper: normalize rows so Euclidean ≡ Cosine distance ---
+row_normalize <- function(X) {
+  nrm <- sqrt(rowSums(X^2))
+  nrm[nrm == 0] <- 1
+  X / nrm
+}
+
+# --- Build (symmetrized) kNN graph from an embedding matrix Z (n x r) ---
+# metric: "cosine" (default) or "euclidean"
+# mutual: keep only mutual kNN edges (stricter) vs union (symmetric)
+# weights: optional; if TRUE, use similarity weights on edges
+build_knn_graph <- function(Z, k = 50, metric = c("cosine","euclidean"),
+                            mutual = TRUE, weights = TRUE, seed = 1) {
+  set.seed(seed)
+  metric <- match.arg(metric)
+  X <- if (metric == "cosine") row_normalize(as.matrix(Z)) else as.matrix(Z)
+
+  # kNN indices and distances (Euclidean on X; for cosine, X is normalized)
+  nn <- FNN::get.knn(X, k = k, algorithm = "cover_tree")
+  n <- nrow(X)
+
+  # Build edge list: i -> nn$nn.index[i, j]
+  irep <- rep(seq_len(n), each = k)
+  jvec <- as.vector(nn$nn.index)
+  dvec <- as.vector(nn$nn.dist)
+
+  # Symmetrize
+  edges <- data.frame(from = irep, to = jvec, dist = dvec)
+  edges <- edges[edges$from != edges$to, ]
+
+  if (mutual) {
+    # keep only mutual edges
+    key <- paste(edges$from, edges$to, sep = "_")
+    key_rev <- paste(edges$to, edges$from, sep = "_")
+    keep <- key %in% key_rev
+    edges <- edges[keep, , drop = FALSE]
+  }
+
+  # Convert distance to similarity (for weights)
+  if (weights) {
+    # Cosine similarity if metric == cosine; otherwise use exp(-dist)
+    if (metric == "cosine") {
+      # since X is normalized, dist^2 = 2(1 - cos); ⇒ cos = 1 - dist^2/2
+      sim <- pmax(0, 1 - (edges$dist^2) / 2)
+    } else {
+      sim <- exp(-edges$dist / (median(edges$dist) + 1e-8))
+    }
+  } else {
+    sim <- NULL
+  }
+
+  g <- igraph::graph_from_data_frame(
+    d = data.frame(from = edges$from, to = edges$to, weight = sim),
+    directed = FALSE, vertices = data.frame(name = seq_len(n))
+  )
+
+  # ensure simple and connected components handled (keep giant component if wanted)
+  g <- igraph::simplify(g, remove.multiple = TRUE, remove.loops = TRUE)
+  g
+}
+
+# Louvain clustering + modularity for a *single* graph
+graph_louvain_with_modularity <- function(g) {
+  # if weighted, Louvain will use edge attribute 'weight'
+  cw <- igraph::cluster_louvain(g, weights = E(g)$weight)
+  memb <- igraph::membership(cw)
+  Q <- igraph::modularity(g, memb, weights = E(g)$weight)
+  list(membership = memb, modularity = unname(Q), n_clusters = length(unique(memb)))
+}
+
+# Run over a grid of k (neighbors), return a tidy data.frame of Q vs k
+er_graph_knn_modularity_grid <- function(
+    Z,
+    knn_grid = seq(10, 500, by = 10),
+    metric = "cosine",
+    mutual = TRUE,
+    weights = TRUE,
+    seed = 1
+){
+  rows <- vector("list", length(knn_grid))
+  for (i in seq_along(knn_grid)) {
+    k <- knn_grid[i]
+    g <- build_knn_graph(Z, k = k, metric = metric, mutual = mutual, weights = weights, seed = seed)
+    fit <- graph_louvain_with_modularity(g)
+    rows[[i]] <- data.frame(
+      method = "louvain_knn",
+      knn = k,
+      modularity = fit$modularity,
+      n_clusters = fit$n_clusters,
+      stringsAsFactors = FALSE
+    )
+  }
+  do.call(rbind, rows)
+}
