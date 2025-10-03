@@ -195,11 +195,12 @@ er_save_report_pdf <- function(res,
                     gp = grid::gpar(fontsize = size))
   }
   draw_table <- function(df, y, height = 0.75) {
-    tg <- gridExtra::tableGrob(df, rows = NULL)
-    grid::pushViewport(grid::viewport(x = 0.5, y = y, width = 0.9, height = height))
-    on.exit(grid::popViewport(), add = TRUE)  # // CHANGED: ensure matching pop
-    grid::grid.draw(tg)
-  }
+  tg <- gridExtra::tableGrob(df, rows = NULL)
+  grid::pushViewport(grid::viewport(x = 0.5, y = y, width = 0.9, height = height))
+  grid::grid.draw(tg)
+  grid::popViewport()   # <— POP IMMEDIATELY (no on.exit)
+}
+
 
   fields_used <- paste_fields(
     get_or(res$fields,
@@ -332,15 +333,16 @@ er_save_report_pdf <- function(res,
     }
   }
 
-  # Curves (as grobs)
+  # Curves
   if (length(curve_grobs)) {
     for (nm in names(curve_grobs)) {
       new_page(); title_grob("Method Curves", y = 0.96)
-      grid::pushViewport(grid::viewport(x = 0.5, y = 0.47, width = 0.9, height = 0.82))  # // CHANGED
-      on.exit(grid::popViewport(), add = TRUE)                                           # // CHANGED
-      grid::grid.draw(curve_grobs[[nm]])                                                 # // CHANGED
+      grid::pushViewport(grid::viewport(x = 0.5, y = 0.47, width = 0.9, height = 0.82))
+      grid::grid.draw(curve_grobs[[nm]])
+      grid::popViewport()  # pop immediately; no on.exit
     }
   }
+
 
   # Top items
   if (!is.null(res$top_items) && is.data.frame(res$top_items) && nrow(res$top_items) > 0) {
