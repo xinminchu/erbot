@@ -1,3 +1,7 @@
+
+devtools::document()
+
+
 ### This is normal installation ###
 remotes::install_git("https://github.com/xinminchu/erbot.git", upgrade = "never")
 library(erbot)

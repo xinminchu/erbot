@@ -1,3 +1,16 @@
+unlink("NAMESPACE")
+
+# From the package root
+renv::activate()          # if you use renv
+devtools::document()      # regenerates NAMESPACE + Rd
+devtools::load_all()      # reloads the pkg
+getNamespaceExports("erbot")
+
+readLines("NAMESPACE")
+
+
+
+
 # ---- Unload if loaded
 if ("erbot" %in% loadedNamespaces()) try(unloadNamespace("erbot"), silent = TRUE)
 suppressWarnings(try(detach("package:erbot", unload = TRUE, character.only = TRUE), silent = TRUE))
