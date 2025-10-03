@@ -104,24 +104,22 @@ er_gc_top_table <- function(res, top_n=5, metric=NULL){
 }
 
 
-#' Save an ER PDF report (rounded metrics + runtime)
+#' Save an organized ER PDF report (no Rmd)
 #'
-#' Create a PDF report with overview info, runtime, and performance tables.
-#' This version does not use R Markdown, only base graphics + grid.
+#' Creates a multi-page PDF report with a cover, clean metric tables (rounded),
+#' optional curves, and basic run metadata. No R Markdown is used.
 #'
 #' @param res List-like ER result object from \code{er_main()}.
-#' @param file Character. Output PDF path.
-#' @param dataset_name Character. Dataset label.
-#' @param top_n Integer. Number of top items to show if available.
-#' @param digits Integer. Decimal places for numeric columns (default 5).
-#' @param runtime_sec Numeric or NULL. If provided, runtime in seconds will be printed.
+#'   Tries to use: \code{res$performance}, \code{res$agreement}, \code{res$curves},
+#'   \code{res$top_items}, and common metadata like \code{res$fields} or
+#'   \code{res$params$fields}, \code{res$best}, etc. All are optional.
+#' @param file Output PDF filepath.
+#' @param dataset_name Label for the dataset.
+#' @param top_n How many top items to show if available.
+#' @param digits Decimal places for numeric printing.
+#' @param runtime_sec Optional elapsed time in seconds to display on the cover.
 #'
-#' @return Invisibly returns the output file path.
-#'
-#' @examples
-#' \dontrun{
-#' er_save_report_pdf(res, "cora_report.pdf", dataset_name="CORA", top_n=5, digits=5)
-#' }
+#' @return (Invisibly) the output path.
 #' @export
 er_save_report_pdf <- function(res,
                                file,
@@ -129,94 +127,168 @@ er_save_report_pdf <- function(res,
                                top_n        = 5,
                                digits       = 5,
                                runtime_sec  = NULL) {
-  if (!requireNamespace("gridExtra", quietly = TRUE)) {
-    stop("Package 'gridExtra' is required. Install with install.packages('gridExtra').")
-  }
-  if (!requireNamespace("grid", quietly = TRUE)) {
-    stop("Package 'grid' is required. Install with install.packages('grid').")
-  }
+  if (!requireNamespace("gridExtra", quietly = TRUE))
+    stop("Please install 'gridExtra'.")
+  if (!requireNamespace("grid", quietly = TRUE))
+    stop("Please install 'grid'.")
+  has_gg <- requireNamespace("ggplot2", quietly = TRUE)
 
-  # helper to round numeric cols
+  # ---------- small utils ----------
   round_num <- function(df, d) {
     if (!is.data.frame(df)) return(df)
-    num_cols <- vapply(df, is.numeric, TRUE)
-    if (any(num_cols)) df[num_cols] <- lapply(df[num_cols], round, d)
+    num <- vapply(df, is.numeric, TRUE)
+    if (any(num)) df[num] <- lapply(df[num], round, d)
     df
   }
-
-  # rounded copy for display
-  res_disp <- res
-  if (!is.null(res_disp$performance)) res_disp$performance <- round_num(res_disp$performance, digits)
-  if (!is.null(res_disp$agreement))   res_disp$agreement   <- round_num(res_disp$agreement, digits)
-  if (!is.null(res_disp$curves)) {
-    res_disp$curves <- lapply(res_disp$curves, round_num, d = digits)
+  # Coerce any shape to a printable data.frame
+  coerce_table <- function(x) {
+    if (is.null(x)) return(NULL)
+    if (is.data.frame(x)) return(round_num(x, digits))
+    if (is.matrix(x))     return(round_num(as.data.frame(x, stringsAsFactors = FALSE), digits))
+    # named vector/list -> Metric / Value
+    v <- tryCatch(unlist(x), error = function(e) NULL)
+    if (is.null(v)) return(NULL)
+    out <- data.frame(Metric = names(v), Value = as.numeric(v), row.names = NULL, check.names = FALSE)
+    out$Value <- round(out$Value, digits)
+    out
   }
-
-  # prepare header text
-  header_lines <- c(
-    paste("Dataset:", dataset_name),
-    paste("Generated at:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
-  )
-  if (!is.null(runtime_sec)) {
-    header_lines <- c(header_lines, sprintf("Total runtime: %.2f sec", runtime_sec))
+  paste_fields <- function(x) {
+    if (is.null(x)) return(NA_character_)
+    if (is.character(x)) return(paste(unique(x), collapse = ", "))
+    if (is.list(x) && is.character(unlist(x))) return(paste(unique(unlist(x)), collapse = ", "))
+    NA_character_
   }
+  get_or <- function(x, default = NA) if (is.null(x)) default else x
 
-  # create PDF
-  grDevices::pdf(file, width = 8.5, height = 11)
-  grid::grid.newpage()
-  grid::grid.text(paste(header_lines, collapse = "\n"),
-                  x = 0.05, y = 0.95, just = c("left","top"),
-                  gp = grid::gpar(fontsize = 12, fontface = "bold"))
+  # Discover some metadata if available
+  fields_used <- paste_fields(get_or(res$fields, get_or(res$params$fields, NULL)))
+  n_records   <- get_or(res$n_records, get_or(NROW(get_or(res$data, NULL)), NA))
+  # Try to infer #clusters from a factor/vector named 'cluster' or from best partition
+  n_clusters  <- NA
+  if (!is.null(res$clusters)) n_clusters <- length(unique(res$clusters))
+  if (!is.null(res$best) && !is.null(res$best$clusters)) n_clusters <- length(unique(res$best$clusters))
+  if (!is.null(res$labels)) n_clusters <- length(unique(res$labels))
 
-  y_pos <- 0.85
+  # Build clean tables
+  perf_tbl <- coerce_table(res$performance)
+  agr_tbl  <- coerce_table(res$agreement)
 
-  # add performance table
-  if (!is.null(res_disp$performance)) {
-    grid::grid.text("Clustering Agreement — Performance", x=0.05, y=y_pos, just=c("left","top"),
-                    gp=grid::gpar(fontsize=11, fontface="bold"))
-    y_pos <- y_pos - 0.05
-    gridExtra::grid.table(res_disp$performance, rows=NULL, theme=gridExtra::ttheme_default(), vp=grid::viewport(y=y_pos, height=0.2))
-    y_pos <- y_pos - 0.25
-  }
-
-  # add agreement table
-  if (!is.null(res_disp$agreement)) {
-    grid::grid.text("Agreement Details", x=0.05, y=y_pos, just=c("left","top"),
-                    gp=grid::gpar(fontsize=11, fontface="bold"))
-    y_pos <- y_pos - 0.05
-    gridExtra::grid.table(res_disp$agreement, rows=NULL, theme=gridExtra::ttheme_default(), vp=grid::viewport(y=y_pos, height=0.2))
-    y_pos <- y_pos - 0.25
-  }
-
-  # add curves (first few rows of each)
-  if (!is.null(res_disp$curves)) {
-    for (nm in names(res_disp$curves)) {
-      tb <- res_disp$curves[[nm]]
-      if (is.data.frame(tb)) {
-        grid::grid.text(paste("Method Curve:", nm), x=0.05, y=y_pos, just=c("left","top"),
-                        gp=grid::gpar(fontsize=11, fontface="bold"))
-        y_pos <- y_pos - 0.05
-        gridExtra::grid.table(utils::head(tb, 10), rows=NULL, theme=gridExtra::ttheme_default(),
-                              vp=grid::viewport(y=y_pos, height=0.2))
-        y_pos <- y_pos - 0.25
+  # Curves: expect a list of data.frames under res$curves
+  curves <- res$curves
+  curve_plots <- list()
+  if (!is.null(curves) && is.list(curves) && has_gg) {
+    for (nm in names(curves)) {
+      tb <- curves[[nm]]
+      if (!is.data.frame(tb)) next
+      tb <- round_num(tb, digits)
+      # Try common x/y keys; fall back to first numeric pair
+      xcol <- intersect(c("k","knn","min_sim","embed_k","gc_threshold","n_clusters","step"), names(tb))[1]
+      ycands <- c("silhouette","modularity","ch","db","gap","ari","f1","precision","recall")
+      ycol <- intersect(ycands, names(tb))[1]
+      if (is.na(xcol) || is.na(ycol)) {
+        # fallback: first two numeric columns
+        num_cols <- names(tb)[vapply(tb, is.numeric, TRUE)]
+        if (length(num_cols) >= 2) {
+          xcol <- num_cols[1]; ycol <- num_cols[2]
+        } else {
+          next
+        }
       }
+      p <- ggplot2::ggplot(tb, ggplot2::aes_string(x = xcol, y = ycol)) +
+        ggplot2::geom_line() + ggplot2::geom_point() +
+        ggplot2::labs(title = nm, x = xcol, y = ycol)
+      curve_plots[[nm]] <- p
     }
   }
 
-  # add top items if available
-  if (!is.null(res_disp$top_items)) {
-    grid::grid.text(sprintf("Top %d items", top_n), x=0.05, y=y_pos, just=c("left","top"),
-                    gp=grid::gpar(fontsize=11, fontface="bold"))
-    y_pos <- y_pos - 0.05
-    gridExtra::grid.table(utils::head(res_disp$top_items, top_n), rows=NULL,
-                          theme=gridExtra::ttheme_default(),
-                          vp=grid::viewport(y=y_pos, height=0.2))
+  # Pagination helpers ---------------------------------------------------
+  new_page <- function() {
+    grid::grid.newpage()
+  }
+  title_grob <- function(text, y = 0.95, size = 14) {
+    grid::grid.text(text, x = 0.05, y = y, just = c("left","top"),
+                    gp = grid::gpar(fontsize = size, fontface = "bold"))
+  }
+  para_grob <- function(text, y, size = 11) {
+    grid::grid.text(text, x = 0.05, y = y, just = c("left","top"),
+                    gp = grid::gpar(fontsize = size))
+  }
+  draw_table <- function(df, y, height = 0.75) {
+    tg <- gridExtra::tableGrob(df, rows = NULL)
+    grid::pushViewport(grid::viewport(x = 0.5, y = y, width = 0.9, height = height))
+    grid::grid.draw(tg)
+    grid::popViewport()
+  }
+  # Split a data.frame into pages with max rows per page
+  split_pages <- function(df, rows_per_page = 30) {
+    n <- nrow(df)
+    if (is.null(n) || n == 0) return(list(df))
+    idx <- split(seq_len(n), ceiling(seq_len(n) / rows_per_page))
+    lapply(idx, function(ii) df[ii, , drop = FALSE])
+  }
+
+  # Start PDF ------------------------------------------------------------
+  dir.create(dirname(file), recursive = TRUE, showWarnings = FALSE)
+  grDevices::pdf(file, width = 8.5, height = 11)
+
+  # Cover page
+  new_page()
+  title_grob(sprintf("%s — Entity Resolution Report", dataset_name))
+  lines <- c(
+    sprintf("Generated at: %s", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
+    if (!is.na(fields_used)) sprintf("Fields used: %s", fields_used) else NULL,
+    if (!is.na(n_records))   sprintf("Records: %s", format(n_records, big.mark = ",")) else NULL,
+    if (!is.na(n_clusters))  sprintf("Clusters (inferred): %s", format(n_clusters, big.mark = ",")) else NULL,
+    if (!is.null(runtime_sec)) sprintf("Total runtime: %.2f sec", runtime_sec) else NULL
+  )
+  para_grob(paste(lines, collapse = "\n"), y = 0.88)
+
+  # Performance table (paginated)
+  if (!is.null(perf_tbl)) {
+    for (i in seq_along(split_pages(perf_tbl))) {
+      pg <- split_pages(perf_tbl)[[i]]
+      new_page()
+      title_grob("Clustering Agreement — Performance", y = 0.96)
+      if (length(split_pages(perf_tbl)) > 1)
+        para_grob(sprintf("Page %d of %d", i, length(split_pages(perf_tbl))), y = 0.91, size = 9)
+      draw_table(pg, y = 0.55, height = 0.8)
+    }
+  }
+
+  # Agreement table (paginated)
+  if (!is.null(agr_tbl)) {
+    for (i in seq_along(split_pages(agr_tbl))) {
+      pg <- split_pages(agr_tbl)[[i]]
+      new_page()
+      title_grob("Agreement Details", y = 0.96)
+      if (length(split_pages(agr_tbl)) > 1)
+        para_grob(sprintf("Page %d of %d", i, length(split_pages(agr_tbl))), y = 0.91, size = 9)
+      draw_table(pg, y = 0.55, height = 0.8)
+    }
+  }
+
+  # Curves (one plot per page)
+  if (length(curve_plots)) {
+    for (nm in names(curve_plots)) {
+      new_page()
+      title_grob("Method Curves", y = 0.96)
+      grid::pushViewport(grid::viewport(x = 0.5, y = 0.5, width = 0.9, height = 0.8))
+      print(curve_plots[[nm]])
+      grid::popViewport()
+    }
+  }
+
+  # Top items (if present)
+  if (!is.null(res$top_items) && is.data.frame(res$top_items) && nrow(res$top_items) > 0) {
+    new_page()
+    title_grob(sprintf("Top %d items", top_n), y = 0.96)
+    draw_table(utils::head(round_num(res$top_items, digits), top_n), y = 0.55, height = 0.8)
   }
 
   grDevices::dev.off()
-
   invisible(file)
 }
+
 
 
 
