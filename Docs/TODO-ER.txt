@@ -1,0 +1,5 @@
+Oct 3, 2025
+
+1) tuning parameter selection
+2) make sure that all mainstream ER methods are included in your benchmark
+3) computing time/space and scalability of methods

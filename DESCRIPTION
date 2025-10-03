@@ -5,7 +5,7 @@ Authors@R:
     c(person("Xinmin", "Chu", , "Xinmin.Chu001@umb.edu", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0001-5140-3852")),
     person("David", "Degras-Valabregue", , "david.degras@umb.edu", role = "aut",
-           comment = c(ORCID = "YOUR-ORCID-ID")),
+           comment = c(ORCID = "0000-0002-7221-584X")),
     person(given = "Forest", family = "Fang", role = "aut",
            email = "forest.fang@outlook.com",
            comment = c(ORCID = "0000-0002-9180-1270")),
