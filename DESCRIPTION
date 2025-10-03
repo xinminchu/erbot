@@ -1,6 +1,6 @@
 Package: erbot
 Title: ERBOT: Entity Resolution Pipeline and Utilities
-Version: 0.1.0
+Version: 0.1.1
 Authors@R: 
     c(person("Xinmin", "Chu", , "Xinmin.Chu001@umb.edu", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0001-5140-3852")),

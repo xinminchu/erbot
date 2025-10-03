@@ -1,6 +1,7 @@
 
 devtools::document()
 
+remove.packages("erbot")
 
 ### This is normal installation ###
 remotes::install_git("https://github.com/xinminchu/erbot.git", upgrade = "never")
@@ -24,13 +25,19 @@ library(cora)
 
 # Requires the 'cora' package providing `cora` and `cora_gold`.
 
-out_dir <- "D:/erbot"
-save_dir <- file.path(out_dir, "results", paste0("cora_perf_", as.integer(Sys.time()), ".csv"))
-fields_cora <- c("authors", "title", "address", "year", "date")
+out_dir <- "D:/erbot/outputs"
+
+save_perf_file <- file.path(
+  out_dir, "results",
+  sprintf("cora_perf_%s.csv", format(Sys.time(), "%Y%m%d%H%M%S"))
+)
+
+
+fields_cora <- c("title", "authors", "address", "date", "year")
 
 res_cora <- run_cora(fields_cora = fields_cora,
                      out_dir = out_dir,
-                     save_perf_file = save_dir)
+                     save_perf_file = save_perf_file)
 
 #################################
 # Run Affiliation

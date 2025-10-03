@@ -7,6 +7,14 @@ An end-to-end toolkit for practical Entity Resolution (ER): feature building (TF
 
 ## Installation
 
+# fastest, with retries and good error messages
+install.packages("pak", repos = "https://r-lib.github.io/p/pak/stable")
+pak::pkg_install("github::xinminchu/erbot")
+
+# remotes fallback (avoid surprise upgrades)
+remotes::install_github("xinminchu/erbot", upgrade = "never", build_vignettes = FALSE)
+
+
 ```r
 # Core dependencies
 install.packages(c(
