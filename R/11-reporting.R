@@ -105,6 +105,69 @@ er_gc_top_table <- function(res, top_n=5, metric=NULL){
   utils::head(gc_curve[ord, c("threshold", metric), drop=FALSE], top_n)
 }
 
+# --- Helpers ---------------------------------------------------------------
+draw_table_fit <- function(df, y, height, max_cols_per_table = 12, min_cex = 0.55) {
+  # 1) If extremely wide vs tall, transpose to reduce width
+  need_transpose <- ncol(df) > (2 * nrow(df)) && nrow(df) > 0
+  if (need_transpose) {
+    df <- as.data.frame(t(df))
+    nm <- rownames(df)
+    df <- cbind(Variable = if (is.null(nm)) paste0("V", seq_len(nrow(df))) else nm, df)
+    rownames(df) <- NULL
+  }
+
+  # 2) If still very wide, split into two vertical tables
+  if (ncol(df) > max_cols_per_table) {
+    mid <- ceiling(ncol(df) / 2)
+    df1 <- df[, 1:mid, drop = FALSE]
+    df2 <- df[, (mid + 1):ncol(df), drop = FALSE]
+
+    # Slightly shrink font based on wider half
+    widest <- max(ncol(df1), ncol(df2))
+    cex <- max(min_cex, min(1, 10 / (0.65 * widest)))
+
+    ttheme <- gridExtra::ttheme_minimal(
+      core    = list(fg_params = grid::gpar(cex = cex),
+                     padding  = grid::unit(c(1.2, 1.2), "mm")),
+      colhead = list(fg_params = grid::gpar(cex = max(min_cex, cex * 1.05)))
+    )
+    tg1 <- gridExtra::tableGrob(df1, rows = NULL, theme = ttheme)
+    tg2 <- gridExtra::tableGrob(df2, rows = NULL, theme = ttheme)
+
+    # Draw stacked
+    grid::pushViewport(grid::viewport(x = 0.5, y = y + height * 0.22,
+                                      width = 0.94, height = height * 0.45,
+                                      just = c("center","center")))
+    grid::grid.draw(tg1); grid::popViewport()
+
+    grid::pushViewport(grid::viewport(x = 0.5, y = y - height * 0.22,
+                                      width = 0.94, height = height * 0.45,
+                                      just = c("center","center")))
+    grid::grid.draw(tg2); grid::popViewport()
+    return(invisible(NULL))
+  }
+
+  # 3) Single table: auto-shrink based on column count
+  cex <- max(min_cex, min(1, 10 / (0.6 * ncol(df))))
+  ttheme <- gridExtra::ttheme_minimal(
+    core    = list(fg_params = grid::gpar(cex = cex),
+                   padding  = grid::unit(c(1.2, 1.2), "mm")),
+    colhead = list(fg_params = grid::gpar(cex = max(min_cex, cex * 1.05)))
+  )
+  tg <- gridExtra::tableGrob(df, rows = NULL, theme = ttheme)
+
+  grid::pushViewport(grid::viewport(x = 0.5, y = y, width = 0.94, height = height))
+  grid::grid.draw(tg)
+  grid::popViewport()
+}
+
+split_pages <- function(df, rows_per_page = 28) {
+  if (nrow(df) <= rows_per_page) return(list(df))
+  idx <- split(seq_len(nrow(df)), ceiling(seq_along(seq_len(nrow(df))) / rows_per_page))
+  lapply(idx, function(i) df[i, , drop = FALSE])
+}
+
+
 
 #' Save an organized ER PDF report (backward-compatible, no Rmd)
 #'
@@ -313,16 +376,30 @@ er_save_report_pdf <- function(res,
     draw_table(params_tbl, y = 0.55, height = 0.8)
   }
 
+  # # Performance
+  # if (!is.null(perf_tbl) && nrow(perf_tbl)) {
+  #   pages <- split_pages(perf_tbl, rows_per_page = 28)
+  #   for (i in seq_along(pages)) {
+  #     new_page(); title_grob("Clustering Agreement — Performance", y = 0.96)
+  #     if (length(pages) > 1) para_grob(sprintf("Page %d of %d", i, length(pages)), y = 0.91, size = 9)
+  #     draw_table(pages[[i]], y = 0.55, height = 0.8)
+  #   }
+  # }
+
   # Performance
   if (!is.null(perf_tbl) && nrow(perf_tbl)) {
     pages <- split_pages(perf_tbl, rows_per_page = 28)
     for (i in seq_along(pages)) {
-      new_page(); title_grob("Clustering Agreement — Performance", y = 0.96)
+      new_page()
+      title_grob("Clustering Agreement — Performance", y = 0.96)
       if (length(pages) > 1) para_grob(sprintf("Page %d of %d", i, length(pages)), y = 0.91, size = 9)
-      draw_table(pages[[i]], y = 0.55, height = 0.8)
+
+      # Fit table(s) without overflow: shrink, split-by-columns, or transpose as needed
+      draw_table_fit(pages[[i]], y = 0.55, height = 0.8,
+                     max_cols_per_table = 12,   # tweak threshold if needed
+                     min_cex = 0.55)            # minimum font shrink
     }
   }
-
   # Agreement
   if (!is.null(agr_tbl) && nrow(agr_tbl)) {
     pages <- split_pages(agr_tbl, rows_per_page = 28)
