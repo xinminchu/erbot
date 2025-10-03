@@ -2,7 +2,7 @@
 % Please edit documentation in R/11-reporting.R
 \name{er_save_report_pdf}
 \alias{er_save_report_pdf}
-\title{Save an ER PDF report (rounded metrics + runtime)}
+\title{Save an organized ER PDF report (no Rmd)}
 \usage{
 er_save_report_pdf(
   res,
@@ -14,27 +14,25 @@ er_save_report_pdf(
 )
 }
 \arguments{
-\item{res}{List-like ER result object from \code{er_main()}.}
+\item{res}{List-like ER result object from \code{er_main()}.
+Tries to use: \code{res$performance}, \code{res$agreement}, \code{res$curves},
+\code{res$top_items}, and common metadata like \code{res$fields} or
+\code{res$params$fields}, \code{res$best}, etc. All are optional.}
 
-\item{file}{Character. Output PDF path.}
+\item{file}{Output PDF filepath.}
 
-\item{dataset_name}{Character. Dataset label.}
+\item{dataset_name}{Label for the dataset.}
 
-\item{top_n}{Integer. Number of top items to show if available.}
+\item{top_n}{How many top items to show if available.}
 
-\item{digits}{Integer. Decimal places for numeric columns (default 5).}
+\item{digits}{Decimal places for numeric printing.}
 
-\item{runtime_sec}{Numeric or NULL. If provided, runtime in seconds will be printed.}
+\item{runtime_sec}{Optional elapsed time in seconds to display on the cover.}
 }
 \value{
-Invisibly returns the output file path.
+(Invisibly) the output path.
 }
 \description{
-Create a PDF report with overview info, runtime, and performance tables.
-This version does not use R Markdown, only base graphics + grid.
-}
-\examples{
-\dontrun{
-er_save_report_pdf(res, "cora_report.pdf", dataset_name="CORA", top_n=5, digits=5)
-}
+Creates a multi-page PDF report with a cover, clean metric tables (rounded),
+optional curves, and basic run metadata. No R Markdown is used.
 }
