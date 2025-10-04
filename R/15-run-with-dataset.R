@@ -45,7 +45,6 @@
 #' @export
 run_cora <- function(fields_cora,
                      out_dir,
-                     file_suffix   = as.numeric(Sys.time()),
                      save_perf_file = NULL,
                      perf_source    = c("auto","performance","agreement"),
                      digits         = 5) {
@@ -70,7 +69,7 @@ run_cora <- function(fields_cora,
     truth     = cora_gold,
     fields    = fields_cora,
     k_grid    = seq(10, 500, by = 10),
-    write_csv = file.path(out_dir, "data", paste0("cora_clean_pred_", file_suffix, ".csv"))
+    write_csv = file.path(out_dir, "data", sprintf("cora_clean_pred_%s.csv", format(Sys.time(), "%Y%m%d%H%M%S")))
   )
   t1 <- Sys.time()
   runtime_sec <- as.numeric(difftime(t1, t0, units = "secs"))
@@ -95,7 +94,7 @@ run_cora <- function(fields_cora,
   # Save PDF report (assumes your er_save_report_pdf supports `digits` and `runtime_sec`)
   er_save_report_pdf(
     res,
-    file         = file.path(out_dir, "results", paste0("cora_report_", file_suffix, ".pdf")),
+    file         = file.path(out_dir, "results", sprintf("cora_report_%s.pdf", format(Sys.time(), "%Y%m%d%H%M%S"))),
     dataset_name = "CORA",
     top_n        = 5,
     digits       = digits,        # ensure 5 d.p. in the report

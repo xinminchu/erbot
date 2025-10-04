@@ -1,3 +1,5 @@
+^renv$
+^renv\.lock$
 ^Literature/
 ^Docs/
 ^dev/
@@ -8,3 +10,4 @@
 ^\.git$
 ^\.github/
 ^README[.]Rmd$
+^.*\.Rproj$
