@@ -1,5 +1,5 @@
 ########################################
-# File: D:/erbot/R/00-utils.R 
+# File: D:/erbot/R/00-utils.R
 ########################################
 
 #' @importFrom magrittr %>%
@@ -24,7 +24,7 @@ er_cosine_dist <- function(X){
 
 
 ########################################
-# File: D:/erbot/R/01-progress.R 
+# File: D:/erbot/R/01-progress.R
 ########################################
 
 #' Progress bar (start)
@@ -72,7 +72,7 @@ er_progress_done <- function(p){
 
 
 ########################################
-# File: D:/erbot/R/02-io.R 
+# File: D:/erbot/R/02-io.R
 ########################################
 
 #' Read "pipe" delimited or try to fix common separators
@@ -164,7 +164,7 @@ ncvr_guess_fields <- function(df){
 
 
 ########################################
-# File: D:/erbot/R/03-select.R 
+# File: D:/erbot/R/03-select.R
 ########################################
 
 #' Select ID + build normalized text_for_matching column
@@ -240,7 +240,7 @@ er_select_fields <- function(df,
 
 
 ########################################
-# File: D:/erbot/R/04-features.R 
+# File: D:/erbot/R/04-features.R
 ########################################
 
 #' Parse a column of serialized embeddings to a numeric matrix
@@ -276,7 +276,7 @@ er_features_tfidf_svd <- function(text_vec, svd_dim=100){
 
 
 ########################################
-# File: D:/erbot/R/05-methods-basic.R 
+# File: D:/erbot/R/05-methods-basic.R
 ########################################
 
 #' K-means clustering on features
@@ -297,7 +297,7 @@ er_pam_from_X <- function(X, k=10){
 
 
 ########################################
-# File: D:/erbot/R/06-methods-graph.R 
+# File: D:/erbot/R/06-methods-graph.R
 ########################################
 
 #' Louvain clustering from a precomputed similarity matrix
@@ -394,7 +394,7 @@ er_embed_knn <- function(emb_mat, k=15, cos_thresh=0.88){
 
 
 ########################################
-# File: D:/erbot/R/06b-mst-sn-edit.R 
+# File: D:/erbot/R/06b-mst-sn-edit.R
 ########################################
 
 #' MST or Sorted-Neighborhood (SN) + edit-distance clustering
@@ -535,7 +535,7 @@ er_mst_or_sn_edit <- function(text_vec,
 
 
 ########################################
-# File: D:/erbot/R/07-similarity-multifield.R 
+# File: D:/erbot/R/07-similarity-multifield.R
 ########################################
 
 #' Build a multi-field similarity (sparse)
@@ -625,7 +625,7 @@ er_similarity_multifield <- function(df, spec, block_key = NULL, top_k = 30) {
 
 
 ########################################
-# File: D:/erbot/R/08-distances-and-sil.R 
+# File: D:/erbot/R/08-distances-and-sil.R
 ########################################
 
 #' Average silhouette from distance
@@ -675,7 +675,7 @@ er_pairwise_stringdist <- function(text_vec, method="jw", block=4000, progress=N
 
 
 ########################################
-# File: D:/erbot/R/09-eval-truth.R 
+# File: D:/erbot/R/09-eval-truth.R
 ########################################
 
 #' Locate clustering_agreement() (GCMER or sourced)
@@ -746,7 +746,7 @@ er_truth_from_any <- function(truth, sep_pair="\\|",
 
 
 ########################################
-# File: D:/erbot/R/10-gc.R 
+# File: D:/erbot/R/10-gc.R
 ########################################
 
 #' Locate resolve_entities() (GCMER or sourced)
@@ -798,7 +798,7 @@ er_gc_from_text <- function(text_vec, thresholds, gc_method=c("lf","sl","rlf"),
 
 
 ########################################
-# File: D:/erbot/R/11-reporting.R 
+# File: D:/erbot/R/11-reporting.R
 ########################################
 
 #' Quick base plotting for a tuning curve
@@ -909,25 +909,48 @@ er_gc_top_table <- function(res, top_n=5, metric=NULL){
 
 #' Save an organized ER PDF report (backward-compatible, no Rmd)
 #'
-#' @param res ER result from er_main() or similar. Handles old/new field layouts.
+#' Combines legacy `er_main()` report pieces (params, performance, agreement, top items)
+#' with new `er_tune()` benchmarking pages (best-per-method, Top-N, tuning curves,
+#' runtime & peak memory). Automatically adapts to the structure it finds in `res`.
+#'
+#' @param res ER result from `er_main()` (legacy) or `er_tune()` (new). If `res` is
+#'   a list with `$curves`, it will render tuning/benchmark pages; otherwise it renders
+#'   legacy tables and any provided curve data.frames in `res$curves` (list).
 #' @param file Output PDF path.
 #' @param dataset_name Title label.
-#' @param top_n Top items to show if res$top_items present.
+#' @param objective Scoring column to highlight best-per-method when `res$curves`
+#'   is present. One of: "silhouette","silhouette_penalized","ch","db_min",
+#'   "modularity","stability","ari","pairwise_f1". Default "silhouette_penalized".
+#' @param top_n Top rows for the Top-N page (if tuning) and for legacy `res$top_items`.
 #' @param digits Rounding for numbers.
-#' @param runtime_sec Optional total runtime in seconds.
+#' @param runtime_sec Optional total runtime in seconds (overrides values inside `res`).
+#' @return (invisible) the output file path.
+#' @examples
+#' \dontrun{
+#' tuned <- er_tune(data=cora, fields=c("title","authors","address"),
+#'                  methods=c("kmeans","louvain","leiden"))
+#' er_save_report_pdf(tuned, "results/cora_report.pdf", "CORA",
+#'                    objective="silhouette_penalized", top_n=5)
+#' }
+#' @import ggplot2
+#' @import gridExtra
+#' @import dplyr
 #' @export
 er_save_report_pdf <- function(res,
                                file,
                                dataset_name = "DATASET",
+                               objective    = "silhouette_penalized",
                                top_n        = 5,
                                digits       = 5,
                                runtime_sec  = NULL) {
-  if (!requireNamespace("gridExtra", quietly = TRUE))
-    stop("Please install 'gridExtra'.")
-  if (!requireNamespace("grid", quietly = TRUE))
-    stop("Please install 'grid'.")
-  has_gg <- requireNamespace("ggplot2", quietly = TRUE)
 
+  # ---- deps (fail clearly) ----
+  if (!requireNamespace("gridExtra", quietly = TRUE)) stop("Please install 'gridExtra'.")
+  if (!requireNamespace("grid", quietly = TRUE))      stop("Please install 'grid'.")
+  has_gg <- requireNamespace("ggplot2", quietly = TRUE)
+  has_dplyr <- requireNamespace("dplyr", quietly = TRUE)
+
+  # ---- tiny helpers ----
   get_or <- function(x, default = NULL) if (is.null(x)) default else x
   round_num <- function(df, d) {
     if (!is.data.frame(df)) return(df)
@@ -941,51 +964,11 @@ er_save_report_pdf <- function(res,
     if (is.list(x) && is.character(unlist(x))) return(paste(unique(unlist(x)), collapse = ", "))
     NA_character_
   }
-
-  as_metric_table <- function(x, digits = 5, prefer_method_col = TRUE) {
-    if (is.null(x)) return(NULL)
-    if (is.data.frame(x)) {
-      out <- round_num(x, digits)
-      if (prefer_method_col && !"Method" %in% names(out) && !is.null(rownames(out))) {
-        out <- cbind(Method = rownames(out), out, row.names = NULL)
-      }
-      return(out)
-    }
-    if (is.matrix(x)) {
-      out <- as.data.frame(x, stringsAsFactors = FALSE)
-      if (!"Method" %in% names(out) && !is.null(rownames(out))) {
-        out <- cbind(Method = rownames(out), out, row.names = NULL)
-      }
-      return(round_num(out, digits))
-    }
-    if (is.numeric(x) && !is.null(names(x))) {
-      out <- as.data.frame(as.list(x), stringsAsFactors = FALSE)
-      out <- round_num(out, digits)
-      return(out)
-    }
-    if (is.list(x)) {
-      ok <- vapply(x, function(el) is.numeric(el) && !is.null(names(el)), TRUE)
-      if (length(ok) && all(ok)) {
-        methods <- names(x)
-        metrics <- unique(unlist(lapply(x, names)))
-        df <- data.frame(Method = methods, check.names = FALSE)
-        for (m in metrics) df[[m]] <- vapply(x, function(el) get_or(el[[m]], NA_real_), numeric(1))
-        return(round_num(df, digits))
-      }
-    }
-    tryCatch({
-      out <- as.data.frame(x, stringsAsFactors = FALSE)
-      round_num(out, digits)
-    }, error = function(e) NULL)
-  }
-
   split_pages <- function(df, rows_per_page = 30) {
-    n <- nrow(df)
-    if (is.null(n) || n == 0) return(list(df))
+    n <- nrow(df); if (is.null(n) || n == 0) return(list(df))
     idx <- split(seq_len(n), ceiling(seq_len(n) / rows_per_page))
     lapply(idx, function(ii) df[ii, , drop = FALSE])
   }
-
   new_page   <- function() grid::grid.newpage()
   title_grob <- function(text, y = 0.95, size = 14) {
     grid::grid.text(text, x = 0.05, y = y, just = c("left","top"),
@@ -997,11 +980,12 @@ er_save_report_pdf <- function(res,
   }
   draw_table <- function(df, y, height = 0.75) {
     tg <- gridExtra::tableGrob(df, rows = NULL)
-    grid::pushViewport(grid::viewport(x = 0.5, y = y, width = 0.9, height = height))
-    on.exit(grid::popViewport(), add = TRUE)  # // CHANGED: ensure matching pop
+    grid::pushViewport(grid::viewport(x = 0.5, y = y, width = 0.94, height = height))
+    on.exit(grid::popViewport(), add = TRUE)
     grid::grid.draw(tg)
   }
 
+  # ---- legacy-friendly field harvest ----
   fields_used <- paste_fields(
     get_or(res$fields,
            get_or(get_or(res$params$fields, NULL),
@@ -1022,6 +1006,7 @@ er_save_report_pdf <- function(res,
   )
   runtime_sec <- get_or(runtime_sec, get_or(res$runtime_sec, get_or(res$details$total_runtime, NULL)))
 
+  # ---- params table (legacy) ----
   param_sources <- list(
     get_or(res$selected_params, NULL),
     get_or(res$params, NULL),
@@ -1050,25 +1035,56 @@ er_save_report_pdf <- function(res,
     }
   }
 
+  # ---- legacy metrics tables ----
+  as_metric_table <- function(x, digits = 5, prefer_method_col = TRUE) {
+    if (is.null(x)) return(NULL)
+    if (is.data.frame(x)) {
+      out <- round_num(x, digits)
+      if (prefer_method_col && !"Method" %in% names(out) && !is.null(rownames(out))) {
+        out <- cbind(Method = rownames(out), out, row.names = NULL)
+      }
+      return(out)
+    }
+    if (is.matrix(x)) {
+      out <- as.data.frame(x, stringsAsFactors = FALSE)
+      if (!"Method" %in% names(out) && !is.null(rownames(out))) {
+        out <- cbind(Method = rownames(out), out, row.names = NULL)
+      }
+      return(round_num(out, digits))
+    }
+    if (is.numeric(x) && !is.null(names(x))) {
+      out <- as.data.frame(as.list(x), stringsAsFactors = FALSE)
+      return(round_num(out, digits))
+    }
+    if (is.list(x)) {
+      ok <- vapply(x, function(el) is.numeric(el) && !is.null(names(el)), TRUE)
+      if (length(ok) && all(ok)) {
+        methods <- names(x)
+        metrics <- unique(unlist(lapply(x, names)))
+        df <- data.frame(Method = methods, check.names = FALSE)
+        for (m in metrics) df[[m]] <- vapply(x, function(el) get_or(el[[m]], NA_real_), numeric(1))
+        return(round_num(df, digits))
+      }
+    }
+    tryCatch({ round_num(as.data.frame(x, stringsAsFactors = FALSE), digits) },
+             error = function(e) NULL)
+  }
   perf_tbl <- as_metric_table(get_or(res$performance, NULL), digits = digits)
   agr_tbl  <- as_metric_table(get_or(res$agreement,  NULL), digits = digits)
 
-  # ---------- Curves -> Grobs (no base graphics, no print()) ----------
-  curve_list <- list()
-  if (is.list(res$curves)) {
-    curve_list <- res$curves
-  } else {
-    gc_curve <- get_or(res$tuning$gc_threshold_curve, NULL)
-    if (is.data.frame(gc_curve)) curve_list <- list(GC_threshold = gc_curve)
-  }
+  # ---- new tuning curves (tidy) or legacy curve list ----
+  tuning_df <- get_or(res$curves, NULL)
+  is_tuning_like <- is.data.frame(tuning_df) &&
+    all(c("method","time_sec","peak_mem_MB") %in% names(tuning_df))
 
-  # // CHANGED: return a grob instead of a ggplot object; draw with grid.draw()
+  # For legacy: res$curves may be a list of data.frames -> draw as grobs
   make_curve_grob <- function(tb, title) {
     if (!has_gg || !is.data.frame(tb)) return(NULL)
-    xcol <- intersect(c("k","knn","min_sim","embed_k","gc_threshold","n_clusters","step","threshold"), names(tb))
+    xcol <- intersect(c("k","k_knn","min_sim","embed_k","gc_threshold","n_clusters","step","threshold","eps","resolution_parameter"),
+                      names(tb))
     xcol <- get_or(xcol[1], NULL)
-    ycands <- c("silhouette","modularity","ch","db","gap","ari","f1","precision","recall",
-                "adj_rand","rand","jaccard","F_measure","fowlkes_mallow")
+    ycands <- c("silhouette","silhouette_pen","modularity","ch","db","gap","ari","f1","precision","recall",
+                "adj_rand","rand","jaccard","F_measure","fowlkes_mallow",".score")
     ycol <- intersect(ycands, names(tb)); ycol <- get_or(ycol[1], NULL)
     if (is.null(xcol) || is.null(ycol)) {
       num_cols <- names(tb)[vapply(tb, is.numeric, TRUE)]
@@ -1077,24 +1093,24 @@ er_save_report_pdf <- function(res,
     tb <- round_num(tb, digits)
     p <- ggplot2::ggplot(tb, ggplot2::aes_string(x = xcol, y = ycol)) +
       ggplot2::geom_line() + ggplot2::geom_point() +
-      ggplot2::labs(title = title, x = xcol, y = ycol)
-    gg <- ggplot2::ggplotGrob(p)  # <- grob, not a plot
-    gg
+      ggplot2::labs(title = title, x = xcol, y = ycol) +
+      ggplot2::theme_minimal(base_size = 11)
+    ggplot2::ggplotGrob(p)
   }
-
-  curve_grobs <- list()
-  if (length(curve_list)) {
-    for (nm in names(curve_list)) {
-      g <- make_curve_grob(curve_list[[nm]], nm)
-      if (!is.null(g)) curve_grobs[[nm]] <- g
+  legacy_curve_grobs <- list()
+  if (!is_tuning_like && is.list(res$curves) && length(res$curves)) {
+    for (nm in names(res$curves)) {
+      g <- make_curve_grob(res$curves[[nm]], nm)
+      if (!is.null(g)) legacy_curve_grobs[[nm]] <- g
     }
   }
 
-  # ---------- Render (all grid; no base plotting) ----------
+  # ---- create output ----
   dir.create(dirname(file), recursive = TRUE, showWarnings = FALSE)
-  grDevices::pdf(file, width = 8.5, height = 11, onefile = TRUE)  # // CHANGED: explicit onefile=TRUE
+  grDevices::pdf(file, width = 8.5, height = 11, onefile = TRUE)
+  on.exit(try(grDevices::dev.off(), silent = TRUE), add = TRUE)
 
-  # Cover
+  # Cover page
   new_page()
   title_grob(sprintf("%s — Entity Resolution Report", dataset_name))
   cover_lines <- c(
@@ -1107,13 +1123,13 @@ er_save_report_pdf <- function(res,
   )
   para_grob(paste(cover_lines, collapse = "\n"), y = 0.88)
 
-  # Selected Parameters
+  # ---- Selected Parameters (legacy) ----
   if (!is.null(params_tbl) && nrow(params_tbl)) {
     new_page(); title_grob("Selected Parameters", y = 0.96)
     draw_table(params_tbl, y = 0.55, height = 0.8)
   }
 
-  # Performance
+  # ---- Performance (legacy) ----
   if (!is.null(perf_tbl) && nrow(perf_tbl)) {
     pages <- split_pages(perf_tbl, rows_per_page = 28)
     for (i in seq_along(pages)) {
@@ -1123,7 +1139,7 @@ er_save_report_pdf <- function(res,
     }
   }
 
-  # Agreement
+  # ---- Agreement (legacy) ----
   if (!is.null(agr_tbl) && nrow(agr_tbl)) {
     pages <- split_pages(agr_tbl, rows_per_page = 28)
     for (i in seq_along(pages)) {
@@ -1133,26 +1149,171 @@ er_save_report_pdf <- function(res,
     }
   }
 
-  # Curves (as grobs)
-  if (length(curve_grobs)) {
-    for (nm in names(curve_grobs)) {
-      new_page(); title_grob("Method Curves", y = 0.96)
-      grid::pushViewport(grid::viewport(x = 0.5, y = 0.47, width = 0.9, height = 0.82))  # // CHANGED
-      on.exit(grid::popViewport(), add = TRUE)                                           # // CHANGED
-      grid::grid.draw(curve_grobs[[nm]])                                                 # // CHANGED
+  # ---- NEW: Tuning/benchmark pages when res$curves is tidy ----
+  if (is_tuning_like) {
+    curves <- tuning_df
+
+    # normalize expected columns
+    needed <- c("method","silhouette","silhouette_pen","ch","db","modularity",
+                "stability","ari","pairwise_f1","time_sec","peak_mem_MB",
+                "k","k_knn","min_sim","eps","minPts","resolution_parameter","max_dist")
+    for (nm in needed) if (is.null(curves[[nm]])) curves[[nm]] <- NA
+    # score col
+    score_col <- switch(objective,
+      silhouette = "silhouette",
+      silhouette_penalized = "silhouette_pen",
+      ch = "ch",
+      db_min = "db",
+      modularity = "modularity",
+      stability = "stability",
+      ari = "ari",
+      pairwise_f1 = "pairwise_f1",
+      stop("Unknown objective for report: ", objective)
+    )
+    curves$.score <- curves[[score_col]]
+    if (objective == "db_min") curves$.score <- -curves$.score
+
+    # Best per method + Top-N
+    if (has_dplyr) {
+      best_tbl <- curves |>
+        dplyr::group_by(.data$method) |>
+        dplyr::arrange(dplyr::desc(.data$.score)) |>
+        dplyr::slice_head(n = 1) |>
+        dplyr::ungroup()
+
+      top_tbl <- curves |>
+        dplyr::arrange(dplyr::desc(.data$.score)) |>
+        dplyr::slice_head(n = min(top_n, nrow(curves)))
+    } else {
+      # fallbacks without dplyr
+      best_tbl <- do.call(rbind, lapply(split(curves, curves$method), function(df) df[which.max(df$.score), , drop = FALSE]))
+      top_tbl  <- curves[order(-curves$.score), , drop = FALSE]
+      top_tbl  <- utils::head(top_tbl, min(top_n, nrow(top_tbl)))
+    }
+
+    # key x-axis chooser per method (for score plot)
+    select_x <- function(df) {
+      x <- if (!all(is.na(df$k))) "k" else
+        if (!all(is.na(df$k_knn))) "k_knn" else
+        if (!all(is.na(df$resolution_parameter))) "resolution_parameter" else
+        if (!all(is.na(df$eps))) "eps" else
+        if (!all(is.na(df$min_sim))) "min_sim" else
+        if (!all(is.na(df$max_dist))) "max_dist" else NULL
+      x
+    }
+    curves$.xvar <- NA_real_
+    for (m in unique(curves$method)) {
+      idx <- which(curves$method == m)
+      xnm <- select_x(curves[idx, , drop = FALSE])
+      if (!is.null(xnm)) curves$.xvar[idx] <- curves[idx, xnm, drop = TRUE]
+    }
+
+    # Best-per-method table (compact)
+    fmt_num <- function(x) ifelse(is.na(x), "", sprintf(paste0("%.", digits, "f"), x))
+    best_view <- best_tbl |>
+      dplyr::mutate(dplyr::across(c(.data$silhouette, .data$silhouette_pen, .data$ch, .data$db,
+                                    .data$modularity, .data$stability, .data$ari, .data$pairwise_f1,
+                                    .data$time_sec, .data$peak_mem_MB), \(z) as.numeric(z))) |>
+      dplyr::mutate(dplyr::across(c(.data$silhouette, .data$silhouette_pen, .data$ch, .data$db,
+                                    .data$modularity, .data$stability, .data$ari, .data$pairwise_f1,
+                                    .data$time_sec, .data$peak_mem_MB), fmt_num)) |>
+      dplyr::select(.data$method, .data$k, .data$k_knn, .data$min_sim, .data$eps, .data$minPts,
+                    .data$resolution_parameter, .data$max_dist,
+                    .data$silhouette_pen, .data$ch, .data$db, .data$modularity,
+                    .data$time_sec, .data$peak_mem_MB)
+
+    # Top-N overall table
+    top_view <- top_tbl |>
+      dplyr::mutate(dplyr::across(c(.data$.score, .data$silhouette_pen, .data$ch, .data$db,
+                                    .data$modularity, .data$time_sec, .data$peak_mem_MB), \(z) as.numeric(z))) |>
+      dplyr::mutate(dplyr::across(c(.data$.score, .data$silhouette_pen, .data$ch, .data$db,
+                                    .data$modularity, .data$time_sec, .data$peak_mem_MB), fmt_num)) |>
+      dplyr::select(.data$method, .data$k, .data$k_knn, .data$min_sim, .data$eps, .data$minPts,
+                    .data$resolution_parameter, .data$max_dist,
+                    .data$.score, .data$silhouette_pen, .data$ch, .data$db,
+                    .data$modularity, .data$time_sec, .data$peak_mem_MB)
+
+    # Page: Best per method
+    new_page()
+    title_grob(sprintf("%s — Tuning summary (%s)", dataset_name, objective), y = 0.96)
+    draw_table(best_view, y = 0.55, height = 0.8)
+
+    # Page: Top-N overall
+    new_page()
+    title_grob(sprintf("Top %d configurations overall", nrow(top_view)), y = 0.96)
+    draw_table(top_view, y = 0.55, height = 0.8)
+
+    # Page: Score curves by method
+    if (has_gg) {
+      # derive highlighted points (best per method)
+      best_points <- best_tbl
+      # get x for each best row:
+      best_points$.xvar <- NA_real_
+      for (i in seq_len(nrow(best_points))) {
+        m <- best_points$method[i]
+        xnm <- select_x(best_points[i, , drop = FALSE])
+        if (!is.null(xnm)) best_points$.xvar[i] <- best_points[[xnm]][i]
+      }
+      p_scores <- ggplot2::ggplot(curves, ggplot2::aes(x = .data$.xvar, y = .data$.score, group = .data$method)) +
+        ggplot2::geom_point(alpha = 0.7) +
+        ggplot2::geom_line(alpha = 0.5) +
+        ggplot2::geom_point(data = best_points,
+                            ggplot2::aes(x = .data$.xvar, y = .data$.score),
+                            size = 3) +
+        ggplot2::facet_wrap(~ method, scales = "free_x") +
+        ggplot2::labs(title = sprintf("%s — Tuning curves (%s)", dataset_name, objective),
+                      x = "Key parameter (method-specific)", y = "Score") +
+        ggplot2::theme_minimal(base_size = 12)
+      print(p_scores)
+    }
+
+    # Page: Runtime per method
+    if (has_gg) {
+      p_time <- ggplot2::ggplot(curves,
+                 ggplot2::aes(x = stats::reorder(.data$method, .data$time_sec, median, na.rm = TRUE),
+                              y = .data$time_sec)) +
+        ggplot2::geom_boxplot(outlier.shape = NA) +
+        ggplot2::geom_point(position = ggplot2::position_jitter(width = 0.1), alpha = 0.5) +
+        ggplot2::coord_flip() +
+        ggplot2::labs(title = "Runtime per method", x = "", y = "Seconds") +
+        ggplot2::theme_minimal(base_size = 12)
+      print(p_time)
+    }
+
+    # Page: Peak memory per method
+    if (has_gg) {
+      p_mem <- ggplot2::ggplot(curves,
+                ggplot2::aes(x = stats::reorder(.data$method, .data$peak_mem_MB, median, na.rm = TRUE),
+                             y = .data$peak_mem_MB)) +
+        ggplot2::geom_boxplot(outlier.shape = NA) +
+        ggplot2::geom_point(position = ggplot2::position_jitter(width = 0.1), alpha = 0.5) +
+        ggplot2::coord_flip() +
+        ggplot2::labs(title = "Peak memory per method", x = "", y = "MiB") +
+        ggplot2::theme_minimal(base_size = 12)
+      print(p_mem)
     }
   }
 
-  # Top items
+  # ---- Legacy curve pages (if any) ----
+  if (length(legacy_curve_grobs)) {
+    for (nm in names(legacy_curve_grobs)) {
+      new_page(); title_grob("Method Curves", y = 0.96)
+      grid::pushViewport(grid::viewport(x = 0.5, y = 0.47, width = 0.94, height = 0.82))
+      on.exit(grid::popViewport(), add = TRUE)
+      grid::grid.draw(legacy_curve_grobs[[nm]])
+    }
+  }
+
+  # ---- Top items (legacy) ----
   if (!is.null(res$top_items) && is.data.frame(res$top_items) && nrow(res$top_items) > 0) {
     new_page()
     title_grob(sprintf("Top %d items", min(top_n, nrow(res$top_items))), y = 0.96)
     draw_table(utils::head(round_num(res$top_items, digits), top_n), y = 0.55, height = 0.8)
   }
 
-  grDevices::dev.off()
   invisible(file)
 }
+
 
 
 #' Generate a timestamped filename
@@ -1223,7 +1384,7 @@ er_write_performance <- function(x, file, digits = 5, ...) {
 
 
 ########################################
-# File: D:/erbot/R/12-pipeline.R 
+# File: D:/erbot/R/12-pipeline.R
 ########################################
 
 #' Unified ER pipeline (full)
@@ -1425,7 +1586,7 @@ er_unified_pipeline <- function(
 
 
 ########################################
-# File: D:/erbot/R/13-main.R 
+# File: D:/erbot/R/13-main.R
 ########################################
 
 #' High-level facade (full pipeline + plotting/tables)
@@ -1595,7 +1756,7 @@ er_main_simple <- function(data,
 
 
 ########################################
-# File: D:/erbot/R/14-weighted-pipeline.R 
+# File: D:/erbot/R/14-weighted-pipeline.R
 ########################################
 
 #' Normalize named field weights
@@ -1736,7 +1897,7 @@ er_general_pipeline <- function(data, truth, id_col = "id",
 
 
 ########################################
-# File: D:/erbot/R/15-run-with-dataset.R 
+# File: D:/erbot/R/15-run-with-dataset.R
 ########################################
 
 #' Run CORA entity resolution demo
@@ -1944,4 +2105,761 @@ run_affiliation <- function(data_path,
   invisible(res)
 }
 
+#' @title ER Benchmark: Tuning, Methods (incl. Leiden), and Scalability
+#' @description Turnkey utilities to (1) tune hyperparameters with robust internal criteria,
+#' (2) run mainstream ER methods (kmeans/agglo/DBSCAN/Louvain/Leiden/CW/threshold-CC/MST+edit),
+#' and (3) measure time & memory and generate scalability curves.
+#' @keywords entity-resolution, clustering, graph, tuning, benchmarking
+#' @importFrom stats kmeans dist hclust cutree
+#' @importFrom utils head tail
+#' @importFrom methods is
+#' @exportPattern ^er_
 
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+# ---------- Utilities ---------------------------------------------------------
+
+#' @title Ensure a package (soft dependency)
+#' @keywords internal
+er_require <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    message(sprintf("NOTE: package '%s' not installed; skipping features that need it.", pkg))
+    return(FALSE)
+  }
+  TRUE
+}
+
+#' @title Simple cosine similarity for matrices
+#' @keywords internal
+er_cosine <- function(X) {
+  nrm <- sqrt(rowSums(X * X) + 1e-12)
+  S <- (X %*% t(X)) / outer(nrm, nrm, "*")
+  S[is.na(S)] <- 0
+  S
+}
+
+#' @title Cosine distances (1 - cosine)
+#' @keywords internal
+er_cosine_dist <- function(X) {
+  S <- er_cosine(X)
+  as.dist(pmax(0, 1 - S))
+}
+
+#' @title Measure time & memory of an expression
+#' @return list(time_sec, peak_mem_MB, result)
+#' @keywords internal
+er_measure_tm <- function(expr) {
+  if (er_require("peakRAM")) {
+    out <- peakRAM::peakRAM(res <- force(expr))
+    list(time_sec = as.numeric(out$Elapsed_Time_sec[1]),
+         peak_mem_MB = as.numeric(out$Peak_RAM_Used_MiB[1]),
+         result = res)
+  } else {
+    t <- system.time(res <- force(expr))
+    bytes <- tryCatch(as.numeric(object.size(res)), error = function(e) NA_real_)
+    list(time_sec = as.numeric(t[["elapsed"]]),
+         peak_mem_MB = ifelse(is.na(bytes), NA_real_, bytes / 1024^2),
+         result = res)
+  }
+}
+
+# ---------- Features: TF-IDF + SVD -------------------------------------------
+
+#' @title Text2Vec TF-IDF + SVD embeddings
+#' @param text character vector
+#' @param svd_dim integer, default 200
+#' @param ngram c(lo, hi), default c(1,2)
+#' @param max_features max vocab size
+#' @return numeric matrix n x svd_dim
+#' @export
+er_tfidf_svd <- function(text, svd_dim = 200, ngram = c(1,2), max_features = 100000) {
+  stopifnot(length(text) > 0)
+  if (!er_require("text2vec") || !er_require("irlba")) {
+    stop("text2vec and irlba are required for er_tfidf_svd().")
+  }
+  it <- text2vec::itoken(text, progressbar = FALSE)
+  v  <- text2vec::create_vocabulary(it, ngram = ngram)
+  v  <- text2vec::prune_vocabulary(v, term_count_min = 2, vocab_term_max = max_features)
+  vectorizer <- text2vec::vocab_vectorizer(v)
+  dtm <- text2vec::create_dtm(it, vectorizer)
+  tfidf <- text2vec::TfIdf$new()
+  X <- tfidf$fit_transform(dtm)
+  s <- irlba::irlba(X, nu = svd_dim, nv = svd_dim)
+  Z <- s$u %*% diag(s$d, nrow = length(s$d), ncol = length(s$d))
+  Z
+}
+
+# ---------- Methods: Vector-space --------------------------------------------
+
+#' @title K-means on embeddings
+#' @export
+er_kmeans_from_Z <- function(Z, k, nstart = 10) {
+  stopifnot(k >= 2, nrow(Z) >= k)
+  stats::kmeans(Z, centers = k, nstart = nstart)$cluster
+}
+
+#' @title Agglomerative (average linkage) on cosine distance
+#' @export
+er_agglomerative_cosine <- function(Z, k) {
+  D <- er_cosine_dist(Z)
+  hc <- stats::hclust(D, method = "average")
+  stats::cutree(hc, k = k)
+}
+
+#' @title DBSCAN on embeddings
+#' @export
+er_dbscan_from_Z <- function(Z, eps, minPts = 5) {
+  if (!er_require("dbscan")) stop("dbscan package required for er_dbscan_from_Z().")
+  fit <- dbscan::dbscan(Z, eps = eps, minPts = minPts)
+  lab <- fit$cluster
+  if (any(lab == 0L)) {
+    noise_idx <- which(lab == 0L)
+    max_id <- max(lab)
+    lab[noise_idx] <- seq_len(length(noise_idx)) + max_id
+  }
+  lab
+}
+
+# ---------- Graph building ----------------------------------------------------
+
+#' @title Build cosine kNN graph with threshold
+#' @param Z matrix n x d
+#' @param k_knn integer
+#' @param min_sim numeric in [0,1]
+#' @return igraph with weights = cosine similarity
+#' @export
+er_knn_graph <- function(Z, k_knn = 50, min_sim = 0.0) {
+  if (!er_require("RANN") || !er_require("igraph")) {
+    stop("RANN and igraph required for er_knn_graph().")
+  }
+  nn <- RANN::nn2(Z, query = Z, k = min(k_knn + 1, nrow(Z)))$nn.idx[, -1, drop = FALSE]
+  n <- nrow(Z)
+  nrm <- sqrt(rowSums(Z * Z) + 1e-12)
+  src <- rep(seq_len(n), times = ncol(nn))
+  dst <- as.vector(nn)
+  num <- rowSums(Z[src, , drop = FALSE] * Z[dst, , drop = FALSE])
+  den <- nrm[src] * nrm[dst]
+  w   <- pmax(0, num / den)
+  keep <- which(w >= min_sim & src < dst)
+  if (!length(keep)) stop("No edges after threshold; try smaller min_sim or larger k_knn.")
+  igraph::graph_from_data_frame(
+    data.frame(from = src[keep], to = dst[keep], weight = w[keep]),
+    directed = FALSE
+  )
+}
+
+# ---------- Graph methods -----------------------------------------------------
+
+#' @title Louvain on kNN graph
+#' @export
+er_louvain_from_Z <- function(Z, k_knn = 50, min_sim = 0.0) {
+  if (!er_require("igraph")) stop("igraph required for er_louvain_from_Z().")
+  g <- er_knn_graph(Z, k_knn = k_knn, min_sim = min_sim)
+  cl <- igraph::cluster_louvain(g, weights = igraph::E(g)$weight)
+  structure(igraph::membership(cl), graph = g)
+}
+
+#' @title Leiden on kNN graph (via leidenbase)
+#' @param resolution_parameter numeric; higher -> more clusters
+#' @param partition_type "ModularityVertexPartition" or "CPMVertexPartition"
+#' @export
+er_leiden_from_Z <- function(
+  Z, k_knn = 50, min_sim = 0.1,
+  resolution_parameter = 0.5,
+  partition_type = "ModularityVertexPartition"
+) {
+  if (!er_require("igraph") || !er_require("leidenbase")) {
+    stop("Packages 'igraph' and 'leidenbase' required for er_leiden_from_Z().")
+  }
+  g <- er_knn_graph(Z, k_knn = k_knn, min_sim = min_sim)
+  part <- leidenbase::leiden_find_partition(
+    g,
+    partition_type = partition_type,
+    weights = igraph::E(g)$weight,
+    resolution_parameter = resolution_parameter,
+    seed = 1,
+    n_iterations = -1
+  )
+  structure(part$membership, graph = g)
+}
+
+#' @title Chinese Whispers (label propagation)
+#' @export
+er_chinese_whispers <- function(g, iters = 20) {
+  if (!er_require("igraph")) stop("igraph required for er_chinese_whispers().")
+  n <- igraph::vcount(g)
+  lab <- seq_len(n)
+  for (t in seq_len(iters)) {
+    order <- sample.int(n)
+    for (v in order) {
+      ne  <- igraph::neighbors(g, v)
+      if (length(ne) == 0) next
+      ws  <- igraph::E(g)[from(v) %--% ne]$weight
+      labs <- lab[as.integer(ne)]
+      lab[v] <- as.integer(names(which.max(tapply(ws, labs, sum))))
+    }
+  }
+  lab
+}
+
+#' @title Thresholded connected components on cosine similarity
+#' @export
+er_threshold_cc <- function(Z, min_sim = 0.6, k_knn = 100) {
+  g <- er_knn_graph(Z, k_knn = k_knn, min_sim = min_sim)
+  igraph::components(g)$membership
+}
+
+#' @title MST + Edit Distance threshold (single text field)
+#' @export
+er_mst_edit <- function(text, max_dist = 3) {
+  if (!er_require("igraph") || !er_require("stringdist")) {
+    stop("igraph and stringdist required for er_mst_edit().")
+  }
+  n <- length(text)
+  if (n > 8000L) warning("er_mst_edit(): O(n^2) edit-distance; add blocking for n>8k.")
+  D <- as.matrix(stringdist::stringdistmatrix(text, text, method = "lv"))
+  g  <- igraph::graph_from_adjacency_matrix(D, mode = "undirected", weighted = TRUE, diag = FALSE)
+  mst <- igraph::mst(g, weights = igraph::E(g)$weight)
+  bad <- which(igraph::E(mst)$weight > max_dist)
+  if (length(bad)) mst <- igraph::delete_edges(mst, bad)
+  igraph::components(mst)$membership
+}
+
+# ---------- Internal & External Criteria -------------------------------------
+
+#' @title Internal metrics (Silhouette/CH/DB/Modularity/Stability)
+#' @export
+er_internal_metrics <- function(Z, labels, G = NULL, sample_n = 2000L) {
+  stopifnot(length(labels) == nrow(Z))
+  n <- nrow(Z); k <- length(unique(labels))
+
+  # Silhouette (sampled, cosine)
+  sil <- NA_real_
+  if (k >= 2L) {
+    idx <- if (n > sample_n) sample.int(n, sample_n) else seq_len(n)
+    D   <- er_cosine_dist(Z[idx, , drop = FALSE])
+    if (er_require("cluster")) {
+      sil_obj <- cluster::silhouette(as.integer(labels[idx]), D)
+      sil <- mean(sil_obj[, 3L])
+    }
+  }
+
+  # CH & DB (Euclidean in Z)
+  X <- Z
+  mu <- colMeans(X)
+  W <- 0; B <- 0
+  centers <- rowsum(X, labels) / as.numeric(table(labels))
+  for (lab in unique(labels)) {
+    Xi <- X[labels == lab, , drop = FALSE]
+    ci <- centers[as.character(lab), , drop = FALSE]
+    W  <- W + sum((Xi - matrix(ci, nrow(Xi), ncol(Xi), TRUE))^2)
+    B  <- B + nrow(Xi) * sum((ci - mu)^2)
+  }
+  CH <- if (k > 1L && k < n) (B/(k-1)) / (W/(n-k)) else NA_real_
+
+  db <- NA_real_
+  if (k >= 2L) {
+    Si <- sapply(unique(labels), function(l) {
+      Xi <- X[labels == l, , drop = FALSE]
+      ci <- centers[as.character(l), , drop = FALSE]
+      sqrt(mean(rowSums((Xi - matrix(ci, nrow(Xi), ncol(Xi), TRUE))^2)))
+    })
+    C <- as.matrix(dist(centers))
+    R <- outer(Si, Si, "+") / (C + 1e-12)
+    diag(R) <- -Inf
+    db <- mean(apply(R, 1L, max), na.rm = TRUE)
+  }
+
+  Q <- NA_real_
+  if (!is.null(G) && er_require("igraph")) {
+    Q <- igraph::modularity(G, membership = labels, weights = igraph::E(G)$weight)
+  }
+
+  list(silhouette = sil, ch = CH, db = db, modularity = Q)
+}
+
+#' @title Penalized Silhouette (avoid monotone-in-k)
+#' @export
+er_penalize_silhouette <- function(sil, k, n, alpha = NULL) {
+  if (is.na(sil) || is.na(k) || k < 2L) return(NA_real_)
+  if (is.null(alpha)) {
+    kmax <- max(3, floor(sqrt(n)))
+    alpha <- 0.1 / max(1, log(kmax))
+  }
+  sil - alpha * log(k)
+}
+
+#' @title Stability via bootstrap ARI
+#' @export
+er_stability_ari <- function(Z, B = 10L, frac = 0.8, fit_fun, ...) {
+  if (!er_require("mclust")) return(NA_real_)
+  ARIs <- numeric(B)
+  for (b in seq_len(B)) {
+    idx <- sample.int(nrow(Z), max(2L, floor(frac * nrow(Z))))
+    s1 <- idx[seq_along(idx) %% 2 == 1]
+    s2 <- idx[seq_along(idx) %% 2 == 0]
+    if (length(s1) < 2 || length(s2) < 2) next
+    lab1 <- fit_fun(Z[s1, , drop = FALSE], ...)
+    lab2 <- fit_fun(Z[s2, , drop = FALSE], ...)
+    ARIs[b] <- mclust::adjustedRandIndex(lab1, lab2)
+  }
+  mean(ARIs, na.rm = TRUE)
+}
+
+#' @title External metrics (ARI, pairwise F1)
+#' @export
+er_external_metrics <- function(labels, truth_pairs = NULL, truth_vec = NULL) {
+  out <- list(ari = NA_real_, pairwise_f1 = NA_real_)
+  if (!is.null(truth_vec) && er_require("mclust")) {
+    out$ari <- mclust::adjustedRandIndex(labels, truth_vec)
+  }
+  if (!is.null(truth_pairs)) {
+    TP <- FP <- FN <- 0L
+    for (r in seq_len(nrow(truth_pairs))) {
+      i <- truth_pairs$i[r]; j <- truth_pairs$j[r]; y <- truth_pairs$label[r]
+      pred <- as.integer(labels[i] == labels[j])
+      if (pred == 1L && y == 1L) TP <- TP + 1L
+      if (pred == 1L && y == 0L) FP <- FP + 1L
+      if (pred == 0L && y == 1L) FN <- FN + 1L
+    }
+    prec <- ifelse(TP + FP == 0, NA_real_, TP/(TP+FP))
+    rec  <- ifelse(TP + FN == 0, NA_real_, TP/(TP+FN))
+    out$pairwise_f1 <- ifelse(is.na(prec) || is.na(rec) || prec+rec==0, NA_real_, 2*prec*rec/(prec+rec))
+  }
+  out
+}
+
+# ---------- Tuning Engine (incl. Leiden) -------------------------------------
+
+#' @title Tune ER methods over parameter grids (incl. Leiden if available)
+#' @param data data.frame with ER text fields
+#' @param fields character vector of fields to use (concatenated)
+#' @param methods subset of:
+#'   c("kmeans","agglo","dbscan","louvain","leiden","cw","threshold_cc","mst_edit")
+#' @param grids named list of parameter grids per method
+#' @param objective one of: "silhouette","silhouette_penalized","ch","db_min","modularity","stability","ari","pairwise_f1"
+#' @param truth optional list(truth_vec=..., truth_pairs=...)
+#' @return list(curves=data.frame, best=list per method)
+#' @export
+er_tune <- function(data, fields,
+                    methods = c("kmeans","agglo","dbscan","louvain","leiden","cw","threshold_cc","mst_edit"),
+                    grids   = list(),
+                    objective = "silhouette_penalized",
+                    truth = NULL,
+                    svd_dim = 200,
+                    sample_n_sil = 2000L,
+                    stability_B = 10L) {
+
+  stopifnot(all(fields %in% names(data)))
+  txt <- do.call(paste, c(unname(data[fields]), sep = " "))
+  Z <- er_tfidf_svd(txt, svd_dim = svd_dim)
+
+  # filter out methods lacking deps
+  has_igraph  <- er_require("igraph")
+  has_RANN    <- er_require("RANN")
+  has_leiden  <- er_require("leidenbase")
+  methods <- unique(Filter(function(m) {
+    switch(m,
+      kmeans = TRUE,
+      agglo  = TRUE,
+      dbscan = er_require("dbscan"),
+      louvain= has_igraph && has_RANN,
+      leiden = has_igraph && has_RANN && has_leiden,
+      cw     = has_igraph && has_RANN,
+      threshold_cc = has_igraph && has_RANN,
+      mst_edit = er_require("stringdist") && has_igraph,
+      FALSE)
+  }, methods))
+  if (!length(methods)) stop("No methods available (missing dependencies).")
+
+  rows <- list()
+  best_by_method <- list()
+
+  score_row <- function(m, params, labels, G = NULL) {
+    int <- er_internal_metrics(Z, labels, G = G, sample_n = sample_n_sil)
+    ps  <- er_penalize_silhouette(int$silhouette, length(unique(labels)), nrow(Z))
+    stab <- if (identical(objective, "stability")) {
+      er_stability_ari(Z, B = stability_B, fit_fun = function(X, ...) {
+        switch(m,
+          kmeans = er_kmeans_from_Z(X, k = params$k),
+          agglo  = er_agglomerative_cosine(X, k = params$k),
+          dbscan = er_dbscan_from_Z(X, eps = params$eps, minPts = params$minPts),
+          louvain= as.integer(er_louvain_from_Z(X, k_knn = params$k_knn, min_sim = params$min_sim)),
+          leiden = as.integer(er_leiden_from_Z(X, k_knn = params$k_knn, min_sim = params$min_sim,
+                                               resolution_parameter = params$resolution_parameter %||% 0.5)),
+          cw     = {
+            Gx <- er_knn_graph(X, k_knn = params$k_knn %||% 50, min_sim = params$min_sim %||% 0.1)
+            er_chinese_whispers(Gx, iters = params$iters %||% 20)
+          },
+          threshold_cc = er_threshold_cc(X, min_sim = params$min_sim, k_knn = params$k_knn),
+          mst_edit = er_mst_edit(params$text, max_dist = params$max_dist)
+        )
+      })
+    } else NA_real_
+
+    ext <- if (!is.null(truth)) er_external_metrics(labels,
+                     truth_pairs = truth$truth_pairs, truth_vec = truth$truth_vec) else list(ari=NA_real_, pairwise_f1=NA_real_)
+
+    data.frame(
+      method = m,
+      k = if (!is.null(params$k)) params$k else NA_integer_,
+      k_knn = if (!is.null(params$k_knn)) params$k_knn else NA_integer_,
+      min_sim = if (!is.null(params$min_sim)) params$min_sim else NA_real_,
+      eps = if (!is.null(params$eps)) params$eps else NA_real_,
+      minPts = if (!is.null(params$minPts)) params$minPts else NA_real_,
+      resolution_parameter = if (!is.null(params$resolution_parameter)) params$resolution_parameter else NA_real_,
+      max_dist = if (!is.null(params$max_dist)) params$max_dist else NA_real_,
+      silhouette = int$silhouette,
+      silhouette_pen = ps,
+      ch = int$ch,
+      db = int$db,
+      modularity = int$modularity,
+      stability = stab,
+      ari = ext$ari,
+      pairwise_f1 = ext$pairwise_f1,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  for (m in methods) {
+    g <- grids[[m]]
+    if (is.null(g)) {
+      g <- switch(m,
+        kmeans = expand.grid(k = seq(10, 300, by = 10), nstart = 10),
+        agglo  = expand.grid(k = seq(10, 300, by = 10)),
+        dbscan = expand.grid(eps = c(0.8, 1.0, 1.2), minPts = c(5, 10)),
+        louvain= expand.grid(k_knn = c(20, 50, 100), min_sim = c(0.0, 0.1, 0.2)),
+        leiden = expand.grid(k_knn = c(20, 50, 100), min_sim = c(0.0, 0.1, 0.2),
+                             resolution_parameter = c(0.2, 0.5, 1.0)),
+        cw     = expand.grid(iters = c(10, 20, 50), k_knn = 50, min_sim = 0.1),
+        threshold_cc = expand.grid(k_knn = c(50, 100), min_sim = c(0.5, 0.6, 0.7)),
+        mst_edit = expand.grid(max_dist = c(1,2,3)),
+        stop(sprintf("Unknown method %s", m))
+      )
+    }
+
+    method_rows <- vector("list", nrow(g))
+    best_row <- NULL; best_score <- -Inf
+
+    for (i in seq_len(nrow(g))) {
+      params <- as.list(g[i, , drop = FALSE])
+      tm <- er_measure_tm({
+        if (m == "kmeans") {
+          lab <- er_kmeans_from_Z(Z, k = params$k, nstart = params$nstart %||% 10); list(labels = lab, graph = NULL)
+        } else if (m == "agglo") {
+          lab <- er_agglomerative_cosine(Z, k = params$k); list(labels = lab, graph = NULL)
+        } else if (m == "dbscan") {
+          lab <- er_dbscan_from_Z(Z, eps = params$eps, minPts = params$minPts); list(labels = lab, graph = NULL)
+        } else if (m == "louvain") {
+          lab <- er_louvain_from_Z(Z, k_knn = params$k_knn, min_sim = params$min_sim)
+          G <- attr(lab, "graph"); list(labels = as.integer(lab), graph = G)
+        } else if (m == "leiden") {
+          lab <- er_leiden_from_Z(Z, k_knn = params$k_knn, min_sim = params$min_sim,
+                                  resolution_parameter = params$resolution_parameter)
+          G <- attr(lab, "graph"); list(labels = as.integer(lab), graph = G)
+        } else if (m == "cw") {
+          G <- er_knn_graph(Z, k_knn = params$k_knn %||% 50, min_sim = params$min_sim %||% 0.1)
+          lab <- er_chinese_whispers(G, iters = params$iters)
+          list(labels = lab, graph = G)
+        } else if (m == "threshold_cc") {
+          lab <- er_threshold_cc(Z, min_sim = params$min_sim, k_knn = params$k_knn)
+          G <- er_knn_graph(Z, k_knn = params$k_knn, min_sim = params$min_sim)
+          list(labels = lab, graph = G)
+        } else if (m == "mst_edit") {
+          text_field <- data[[fields[1]]]
+          lab <- er_mst_edit(text_field, max_dist = params$max_dist)
+          list(labels = lab, graph = NULL)
+        } else stop("Unknown method.")
+      })
+      row <- score_row(m, params, tm$result$labels, G = tm$result$graph)
+      row$time_sec    <- tm$time_sec
+      row$peak_mem_MB <- tm$peak_mem_MB
+      method_rows[[i]] <- row
+
+      sc <- switch(objective,
+        silhouette = row$silhouette,
+        silhouette_penalized = row$silhouette_pen,
+        ch = row$ch,
+        db_min = -row$db,
+        modularity = row$modularity,
+        stability = row$stability,
+        ari = row$ari,
+        pairwise_f1 = row$pairwise_f1,
+        stop("Unknown objective")
+      )
+      if (!is.na(sc) && sc > best_score) { best_score <- sc; best_row <- row }
+    }
+
+    method_df <- do.call(rbind, method_rows)
+    rows[[m]] <- method_df
+    best_by_method[[m]] <- best_row
+  }
+
+  curves <- do.call(rbind, rows)
+  list(curves = curves, best = best_by_method)
+}
+
+# ---------- Scalability -------------------------------------------------------
+
+#' @title Scalability curves by subsampling n
+#' @export
+er_scaling_curve <- function(data, fields, n_seq,
+                             method = "kmeans",
+                             params_fixed = list(),
+                             svd_dim = 200) {
+  set.seed(1)
+  stopifnot(all(fields %in% names(data)))
+  txt_all <- do.call(paste, c(unname(data[fields]), sep = " "))
+  out <- list()
+  for (n in n_seq) {
+    idx <- if (length(txt_all) > n) sample.int(length(txt_all), n) else seq_along(txt_all)
+    Z <- er_tfidf_svd(txt_all[idx], svd_dim = svd_dim)
+    tm <- er_measure_tm({
+      lab <- switch(method,
+        kmeans = er_kmeans_from_Z(Z, k = params_fixed$k %||% max(2, floor(sqrt(n)))),
+        agglo  = er_agglomerative_cosine(Z, k = params_fixed$k %||% max(2, floor(sqrt(n)))),
+        dbscan = er_dbscan_from_Z(Z, eps = params_fixed$eps %||% 1.0, minPts = params_fixed$minPts %||% 5),
+        louvain= { m <- er_louvain_from_Z(Z, k_knn = params_fixed$k_knn %||% 50, min_sim = params_fixed$min_sim %||% 0.1); as.integer(m) },
+        leiden = { m <- er_leiden_from_Z(Z, k_knn = params_fixed$k_knn %||% 50, min_sim = params_fixed$min_sim %||% 0.1,
+                                         resolution_parameter = params_fixed$resolution_parameter %||% 0.5); as.integer(m) },
+        threshold_cc = er_threshold_cc(Z, min_sim = params_fixed$min_sim %||% 0.6, k_knn = params_fixed$k_knn %||% 100),
+        cw = {
+          G <- er_knn_graph(Z, k_knn = params_fixed$k_knn %||% 50, min_sim = params_fixed$min_sim %||% 0.1)
+          er_chinese_whispers(G, iters = params_fixed$iters %||% 20)
+        },
+        stop("Unsupported method in scaling.")
+      )
+      lab
+    })
+    out[[length(out)+1]] <- data.frame(
+      n = n,
+      method = method,
+      time_sec = tm$time_sec,
+      peak_mem_MB = tm$peak_mem_MB,
+      k = length(unique(tm$result)),
+      stringsAsFactors = FALSE
+    )
+  }
+  do.call(rbind, out)
+}
+
+#' ER quality metrics: CPM, modularity, silhouette, DB, CH, stability, pairwise & B3
+#'
+#' Unified helpers to score graph/vectors clusterings in ER.
+#' - Graph objectives: CPM (resolution gamma), modularity.
+#' - Vector metrics: Silhouette, Davies–Bouldin (DB), Calinski–Harabasz (CH).
+#' - Stability: mean pairwise ARI across multiple runs (labels of same length).
+#' - External with truth: Pairwise P/R/F1 (no explicit pair enumeration), B³ P/R/F1, ARI.
+#'
+#' @param g igraph graph (optional; for CPM/modularity).
+#' @param membership Integer vector of cluster labels (length = n).
+#' @param X Numeric matrix/data.frame of features/embeddings (rows = n) (optional; for silhouette/DB/CH).
+#' @param D Optional distance object/matrix for silhouette (if provided, X is ignored for silhouette).
+#' @param gamma Numeric CPM resolution parameter (default 0.05).
+#' @param weights Optional edge weights vector matching E(g) (defaults to E(g)$weight if present).
+#' @param stability_labels Optional list of label vectors (same length as membership) for stability ARI.
+#' @param truth Optional integer/factor vector of gold cluster ids (length = n) for external metrics.
+#' @param dist_method Distance method for silhouette if D is not given (default "euclidean").
+#'
+#' @return Named list with available metrics.
+#' @export
+#' @importFrom igraph vcount ecount induced_subgraph E modularity is.igraph
+#' @importFrom stats dist
+#' @importFrom cluster silhouette
+#' @importFrom mclust adjustedRandIndex
+er_eval_metrics <- function(
+  g                = NULL,
+  membership,
+  X                = NULL,
+  D                = NULL,
+  gamma            = 0.05,
+  weights          = NULL,
+  stability_labels = NULL,
+  truth            = NULL,
+  dist_method      = "euclidean"
+) {
+  stopifnot(length(membership) >= 2L)
+
+  out <- list(n = length(membership), k = length(unique(membership)))
+
+  # ---------------- Graph-based objectives ----------------
+  if (!is.null(g) && igraph::is.igraph(g)) {
+    # Modularity (igraph’s standard modularity; resolution parameter is not exposed)
+    out$modularity <- try_silent(igraph::modularity(g, membership, weights = weights))
+
+    # CPM score (resolution-free baseline gamma)
+    out$cpm <- try_silent(er_cpm_score(g, membership, gamma = gamma, weights = weights))
+  }
+
+  # ---------------- Vector-based internal indices ----------------
+  if (!is.null(D) || !is.null(X)) {
+    # Silhouette
+    if (is.null(D)) {
+      D <- stats::dist(X, method = dist_method)
+    }
+    sil <- try_silent(cluster::silhouette(membership, D))
+    out$silhouette_mean <- if (!inherits(sil, "try-error")) mean(sil[, 3]) else NA_real_
+
+    # DB & CH (implemented to avoid heavyweight deps)
+    if (!is.null(X)) {
+      db_ch <- try_silent(er_db_ch_indices(X, membership))
+      if (!inherits(db_ch, "try-error")) {
+        out$davies_bouldin <- db_ch$db
+        out$calinski_harabasz <- db_ch$ch
+      } else {
+        out$davies_bouldin <- NA_real_
+        out$calinski_harabasz <- NA_real_
+      }
+    }
+  }
+
+  # ---------------- Stability (mean ARI across runs) ----------------
+  if (!is.null(stability_labels) && length(stability_labels) >= 2L) {
+    out$stability_mean_ari <- try_silent(er_mean_ari(stability_labels))
+  }
+
+  # ---------------- External metrics (with truth) ----------------
+  if (!is.null(truth)) {
+    ext <- try_silent(er_external_scores(membership, truth))
+    if (!inherits(ext, "try-error")) out <- c(out, ext)
+  }
+
+  out
+}
+
+#' CPM quality function for a partition on a graph
+#' @param g igraph graph
+#' @param membership integer labels
+#' @param gamma numeric resolution parameter
+#' @param weights optional numeric vector; defaults to E(g)$weight
+#' @keywords internal
+#' @export
+er_cpm_score <- function(g, membership, gamma = 0.05, weights = NULL) {
+  if (is.null(weights) && "weight" %in% igraph::edge_attr_names(g)) {
+    weights <- igraph::E(g)$weight
+  }
+  # sum_c (e_c - gamma * n_c*(n_c-1)/2); e_c is edge count or weight sum inside c
+  score <- 0
+  for (lab in unique(membership)) {
+    vids <- which(membership == lab)
+    subg <- igraph::induced_subgraph(g, vids)
+    n_c  <- igraph::vcount(subg)
+    if (n_c < 2) next
+    if (!is.null(weights) && length(weights) == igraph::ecount(g)) {
+      # Map to subgraph edges
+      # (simplest robust way: sum weights of edges present in subgraph)
+      e_c <- sum(igraph::E(subg)$weight %||% rep(1, igraph::ecount(subg)))
+    } else {
+      e_c <- igraph::ecount(subg)
+    }
+    score <- score + (e_c - gamma * n_c * (n_c - 1) / 2)
+  }
+  as.numeric(score)
+}
+
+#' Davies–Bouldin and Calinski–Harabasz indices
+#' @param X numeric matrix (rows = samples)
+#' @param membership integer labels
+#' @keywords internal
+#' @export
+er_db_ch_indices <- function(X, membership) {
+  X <- as.matrix(X)
+  labs <- as.integer(factor(membership))
+  k <- length(unique(labs))
+  n <- nrow(X)
+  if (k < 2L || n < k) return(list(db = NA_real_, ch = NA_real_))
+
+  # cluster centers, scatters
+  centers <- vapply(split(seq_len(n), labs), function(idx) colMeans(X[idx, , drop = FALSE]), numeric(ncol(X)))
+  centers <- t(centers)           # k x p
+  # within scatter (mean distance to center per cluster)
+  wc <- vapply(seq_len(k), function(j) {
+    idx <- which(labs == j); if (length(idx) == 0) return(0)
+    mean(rowSums((X[idx, , drop = FALSE] - matrix(centers[j, ], nrow = length(idx), ncol = ncol(X), byrow = TRUE))^2))^0.5
+  }, numeric(1))
+
+  # Davies–Bouldin
+  # R_ij = (S_i + S_j) / M_ij; DB = mean_i max_{j != i} R_ij
+  dist_centers <- as.matrix(dist(centers))
+  R <- matrix(0, k, k)
+  for (i in 1:k) {
+    for (j in 1:k) if (i != j) {
+      R[i, j] <- (wc[i] + wc[j]) / max(dist_centers[i, j], .Machine$double.eps)
+    }
+  }
+  db <- mean(apply(R + diag(-Inf, k), 1, max))
+
+  # Calinski–Harabasz: (B/(k-1)) / (W/(n-k))
+  grand <- colMeans(X)
+  W <- 0; B <- 0
+  for (j in 1:k) {
+    idx <- which(labs == j); nj <- length(idx); if (nj == 0) next
+    # within
+    W <- W + sum(rowSums((X[idx, , drop = FALSE] - matrix(centers[j, ], nrow = nj, ncol = ncol(X), byrow = TRUE))^2))
+    # between
+    B <- B + nj * sum((centers[j, ] - grand)^2)
+  }
+  ch <- (B / max(k - 1, 1)) / (W / max(n - k, 1))
+  list(db = as.numeric(db), ch = as.numeric(ch))
+}
+
+#' Mean ARI across a list of label vectors (stability)
+#' @param labels_list list of integer vectors (same length)
+#' @export
+er_mean_ari <- function(labels_list) {
+  L <- length(labels_list)
+  if (L < 2L) return(NA_real_)
+  idx_pairs <- utils::combn(L, 2)
+  aris <- apply(idx_pairs, 2, function(p) {
+    mclust::adjustedRandIndex(labels_list[[p[1]]], labels_list[[p[2]]])
+  })
+  mean(aris)
+}
+
+#' External scores (pairwise P/R/F1, B³ P/R/F1, ARI)
+#' @param pred integer/factor vector of predicted clusters
+#' @param truth integer/factor vector of gold clusters
+#' @export
+er_external_scores <- function(pred, truth) {
+  stopifnot(length(pred) == length(truth))
+  pred  <- as.integer(factor(pred))
+  truth <- as.integer(factor(truth))
+  n <- length(pred)
+
+  # Pairwise counts without enumerating all pairs
+  n_pairs <- function(counts) sum(counts * (counts - 1) / 2)
+  tab_pt <- table(pred, truth)             # k x g
+  tp <- sum(tab_pt * (tab_pt - 1) / 2)     # sum over intersections C(s_ij, 2)
+  pp <- n_pairs(rowSums(tab_pt))           # predicted pairs
+  gp <- n_pairs(colSums(tab_pt))           # gold pairs
+
+  precision <- if (pp > 0) tp / pp else 0
+  recall    <- if (gp > 0) tp / gp else 0
+  f1_pair   <- if (precision + recall > 0) 2 * precision * recall / (precision + recall) else 0
+
+  # B³
+  sizes_pred  <- rowSums(tab_pt)[match(pred, as.integer(rownames(tab_pt)))]
+  sizes_truth <- colSums(tab_pt)[match(truth, as.integer(colnames(tab_pt)))]
+  # overlap per item i is just count in its (pred, truth)
+  overlap_vec <- tab_pt[cbind(pred, truth)][seq_len(n)]
+  b3_precision <- mean(overlap_vec / sizes_pred)
+  b3_recall    <- mean(overlap_vec / sizes_truth)
+  b3_f1 <- if (b3_precision + b3_recall > 0) 2 * b3_precision * b3_recall / (b3_precision + b3_recall) else 0
+
+  # ARI
+  ari <- mclust::adjustedRandIndex(pred, truth)
+
+  list(
+    pair_precision = as.numeric(precision),
+    pair_recall    = as.numeric(recall),
+    pair_f1        = as.numeric(f1_pair),
+    b3_precision   = as.numeric(b3_precision),
+    b3_recall      = as.numeric(b3_recall),
+    b3_f1          = as.numeric(b3_f1),
+    ari            = as.numeric(ari)
+  )
+}
+
+# --- small helper ---
+`%||%` <- function(a, b) if (is.null(a)) b else a
+try_silent <- function(expr) { try(expr, silent = TRUE) }
