@@ -1,8 +1,19 @@
+Oct 17, 2025
+Refs:
+Neuhof, F., Fisichella, M., Papadakis, G., Nikoletos, K., Augsten, N., Nejdl, W., & Koubarakis, M. (2024). Open benchmark for filtering techniques in entity resolution. VLDB J., 33, 1671-1696. https://doi.org/10.1007/s00778-024-00868-7.
+
+Hassanzadeh, O., Chiang, F., Miller, R., & Lee, H. (2009). Framework for Evaluating Clustering Algorithms in Duplicate Detection. Proc. VLDB Endow., 2, 1282-1293. https://doi.org/10.14778/1687627.1687771.
+
+Benchmarks:
+Continuous Benchmark of ER Filtering Workflows at https://github.com/gpapadis/ContinuousFilteringBenchmark
+
+
+
 Oct 10, 2025
 
 1) Get whole picture of mainstream ER methods through Concensus.app (see shared link by Prof Degras: https://consensus.app/search/what-are-the-main-methods-for-entity-resolution-an/VEjsGVyFTdycYODpmWEnnQ/?utm_source=share&utm_medium=clipboard)
 2) Done vs To-be-done checking (Fellegi-Sunter not efficient, require blocking; deep learning for unsupervised)
-3) Benchmark work: find better methods. e.g. two-step flow (binary classification then clustering) ---- cref. MOAB?!!
+3) Benchmark work: find better methods. e.g. two-step flow (binary classification then clustering) ---- cref. MOABB.
 
 
 -----------------------------------------------
