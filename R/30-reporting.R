@@ -338,7 +338,7 @@ er_save_report_pdf <- function(res,
       if (length(num_cols) >= 2) { xcol <- num_cols[1]; ycol <- num_cols[2] } else { return(NULL) }
     }
     tb <- round_num(tb, digits)
-    p <- ggplot2::ggplot(tb, ggplot2::aes_string(x = xcol, y = ycol)) +
+    p <- ggplot2::ggplot(tb, ggplot2::aes_string(x = !!sym(xcol), y = !!sym(ycol))) +
       ggplot2::geom_line() + ggplot2::geom_point() +
       ggplot2::labs(title = title, x = xcol, y = ycol)
     gg <- ggplot2::ggplotGrob(p)  # <- grob, not a plot
