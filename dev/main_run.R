@@ -1,10 +1,18 @@
-
-devtools::document()
-
 remove.packages("erbot")
+### This is normal installation from local ###
+setwd("D:/erbot")
+devtools::document()
+devtools::install()
 
-### This is normal installation ###
-remotes::install_git("https://github.com/xinminchu/erbot.git", upgrade = "never")
+
+
+
+# remove.packages("erbot")
+# ### This is normal installation from GitHub ###
+# remotes::install_git("https://github.com/xinminchu/erbot.git", upgrade = "never")
+
+
+
 library(erbot)
 packageVersion("erbot")
 
