@@ -6,7 +6,22 @@ Reorganize and improve R package 'erbot'.
 
 No results to report yet, no specific question.
 
+What is the source paper for SN? --
+Hernández, M. A. & Stolfo, S. J. (1995). “The Merge/Purge Problem for Large Databases.” SIGMOD ’95.
+for Edit distance --
+Levenshtein, V. I. (1966). “Binary codes capable of correcting deletions, insertions, and reversals.” Soviet Physics Doklady 10 (8): 707–710.
+
+This algorithm in ERBOT unites:
+
+Sorted-Neighborhood (SN) candidate generation, and
+Edit-distance thresholding for linkage,
+optionally MST-based pruning for robust graph clustering.
+
 Todo:
+Implement parameter tuning in R package 'erbot'.
+
+Keep tractable with recording methods source papers.
+
 
 
 Oct 17, 2025
