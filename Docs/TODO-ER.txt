@@ -1,3 +1,14 @@
+Oct 24, 2025
+
+Read papers on parameter tuning, ER benchmarks,
+
+Reorganize and improve R package 'erbot'.
+
+No results to report yet, no specific question.
+
+Todo:
+
+
 Oct 17, 2025
 Refs:
 Neuhof, F., Fisichella, M., Papadakis, G., Nikoletos, K., Augsten, N., Nejdl, W., & Koubarakis, M. (2024). Open benchmark for filtering techniques in entity resolution. VLDB J., 33, 1671-1696. https://doi.org/10.1007/s00778-024-00868-7.
@@ -6,6 +17,13 @@ Hassanzadeh, O., Chiang, F., Miller, R., & Lee, H. (2009). Framework for Evaluat
 
 Benchmarks:
 Continuous Benchmark of ER Filtering Workflows at https://github.com/gpapadis/ContinuousFilteringBenchmark
+
+Todo:
+Figure out the best tools based on performance of ER methods comparison;
+
+How to calculate weights for multi fields smartly?
+check Mhalanobis distance (The Mahalanobis distance is a measure of the distance between a point
+P{\displaystyle P} and a probability distribution D{\displaystyle D}, introduced by P. C. Mahalanobis in 1936. From Wikipedia)
 
 
 

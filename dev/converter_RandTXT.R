@@ -25,7 +25,7 @@ combine_r_files <- function(input_files, output_file = "combined_scripts.txt") {
 
 # Example usage:
 r_files <- list.files("D:/erbot/R", pattern = "\\.R$", full.names = TRUE) # all .R files in folder "erbot/R"
-combine_r_files(r_files, "D:/erbot/docs/erbot_scripts.txt")
+combine_r_files(r_files, "D:/erbot/docs/erbot_scripts_new.txt")
 
 
 # Split a unified text file into separate R files, using headers like:
