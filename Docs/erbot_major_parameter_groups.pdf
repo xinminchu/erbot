@@ -78,3 +78,73 @@ trailer
 startxref
 2220
 %%EOF
+5 0 obj
+<</Contents 9 0 R/MediaBox[ 0 0 612 792]/Parent 8 0 R/Resources<</Font 1 0 R/ProcSet[/PDF/Text/ImageB/ImageC/ImageI]>>/Rotate 0/Trans<<>>/Type/Page/Annots 10 0 R>>
+endobj
+10 0 obj
+[ 11 0 R 12 0 R]
+endobj
+11 0 obj
+<</Type/Annot/Subtype/Highlight/P 5 0 R/F 4/M(D:20251024113515-05'00')/NM(0ae5ae16-c4de-436b-876a-e49601b31fca)/Rect[ 62 546.2 119.8 569.7]/C[ 1 .941176 .4]/Popup 12 0 R/CA 1/CreationDate(D:20251024113515-05'00')/QuadPoints[ 62 569.7 119.8 569.7 62 558.2 119.8 558.2 62 557.7 100.35 557.7 62 546.2 100.35 546.2]/AP<</N 19 0 R>>>>
+endobj
+12 0 obj
+<</Type/Annot/Subtype/Popup/Open false/F 28/Rect[ 612 449.7 792 569.7]/Parent 11 0 R>>
+endobj
+17 0 obj
+<</Length 131/Type/XObject/Subtype/Form/FormType 1/BBox[ 62 546.2 119.8 569.7]/Matrix[ 1 0 0 1 -62 -546.2]/Resources<</ProcSet[/PDF]>>>>
+stream
+1 .941176 .4 rg
+.71875 w
+62 558.2 m
+62 569.7 l
+119.8 569.7 l
+119.8 558.2 l
+f
+62 546.2 m
+62 557.7 l
+100.35 557.7 l
+100.35 546.2 l
+f
+
+endstream
+endobj
+18 0 obj
+<</Length 9/Type/XObject/Subtype/Form/FormType 1/BBox[ 0 0 57.8 23.5]/Matrix[ 1 0 0 1 0 0]/Resources<</ProcSet[/PDF]/XObject<</Form 17 0 R>>>>/Group<</S/Transparency>>>>
+stream
+/Form Do
+
+endstream
+endobj
+19 0 obj
+<</Length 20/Type/XObject/Subtype/Form/FormType 1/BBox[ 0 0 57.8 23.5]/Matrix[ 1 0 0 1 0 0]/Resources<</ProcSet[/PDF]/XObject<</MWFOForm 18 0 R>>/ExtGState<</R0 20 0 R>>>>>>
+stream
+/R0 gs
+/MWFOForm Do
+
+endstream
+endobj
+20 0 obj
+<</Type/ExtGState/AIS false/BM/Multiply>>
+endobj
+7 0 obj
+<</Author((anonymous))/CreationDate(D:20251024161255+00'00')/Creator((unspecified))/Keywords()/ModDate(D:20251024113843-05'00')/Producer(ReportLab PDF Library - www.reportlab.com)/Subject((unspecified))/Title((anonymous))/Trapped/False>>
+endobj
+xref
+5 1
+0000002647 00000 n
+7 1
+0000004112 00000 n
+10 3
+0000002826 00000 n
+0000002859 00000 n
+0000003205 00000 n
+17 4
+0000003308 00000 n
+0000003611 00000 n
+0000003825 00000 n
+0000004054 00000 n
+trailer
+<</ID[<EF4DA7713849105E16FE3C5C951BACB0><DCE609EC755E91F5B58160F9805B472C>]/Info 7 0 R/Root 6 0 R/Size 21/Prev 2220>>
+startxref
+4365
+%%EOF
