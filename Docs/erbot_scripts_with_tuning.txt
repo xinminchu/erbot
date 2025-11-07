@@ -1,0 +1,2865 @@
+########################################
+# File: D:/erbot/R/00-utils.R
+########################################
+
+#' @importFrom magrittr %>%
+NULL
+
+
+#' Internal utility: Null-coalescing
+#' @keywords internal
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+#' Cosine distance on rows of a matrix
+#' @param X numeric matrix
+#' @return full cosine distance matrix with diag 0
+#' @export
+er_cosine_dist <- function(X){
+  X <- as.matrix(X)
+  nr <- sqrt(rowSums(X^2)); nr[nr == 0] <- 1
+  X <- X / nr
+  D <- 1 - (X %*% t(X))
+  pmax(D, 0)
+}
+
+
+########################################
+# File: D:/erbot/R/01-progress.R
+########################################
+
+#' Progress bar (start)
+#' @param total_steps integer
+#' @param title character
+#' @return progress environment
+#' @export
+er_progress_start <- function(total_steps, title = "ER pipeline"){
+  pb <- utils::txtProgressBar(min=0, max=total_steps, style=3)
+  env <- list(pb=pb, total=total_steps, step=0L, title=title, t0=Sys.time(), last=Sys.time())
+  class(env) <- "er_progress"
+  cat(sprintf("\n[%s] %s — starting (%d steps)\n", format(env$t0, "%H:%M:%S"), title, total_steps))
+  env
+}
+
+#' Progress bar (tick)
+#' @param p progress object from [er_progress_start]
+#' @param label optional label
+#' @export
+er_progress_tick <- function(p, label=NULL){
+  if (!inherits(p, "er_progress")) return(invisible(NULL))
+  p$step <- p$step + 1L
+  utils::setTxtProgressBar(p$pb, p$step)
+  now <- Sys.time()
+  if (!is.null(label)) {
+    cat(sprintf("\n[%s] Step %d/%d: %s (%.1fs)\n",
+                format(now, "%H:%M:%S"), p$step, p$total, label,
+                as.numeric(difftime(now, p$last, units="secs"))))
+  }
+  p$last <- now
+  invisible(p)
+}
+
+#' Progress bar (done)
+#' @param p progress object
+#' @export
+er_progress_done <- function(p){
+  if (!inherits(p, "er_progress")) return(invisible(NULL))
+  close(p$pb)
+  cat(sprintf("\n[%s] %s — done. Total elapsed: %.1fs\n\n",
+              format(Sys.time(), "%H:%M:%S"), p$title,
+              as.numeric(difftime(Sys.time(), p$t0, units="secs"))))
+  invisible(NULL)
+}
+
+
+########################################
+# File: D:/erbot/R/02-io.R
+########################################
+
+#' Read "pipe" delimited or try to fix common separators
+#' @param path file path
+#' @return data.frame with lower-cased names
+#' @export
+er_read_pipe_or_fix <- function(path){
+  DT <- tryCatch(data.table::fread(path, sep="|", quote="\"", header=TRUE, fill=TRUE, showProgress=FALSE), error=function(e) NULL)
+  if (!is.null(DT) && ncol(DT) > 1) { DF <- as.data.frame(DT); names(DF) <- tolower(names(DF)); return(DF) }
+  DF <- tryCatch(readr::read_delim(path, delim="|", quote='"', escape_double=TRUE, trim_ws=TRUE, show_col_types=FALSE), error=function(e) NULL)
+  if (!is.null(DF) && ncol(DF) > 1) { DF <- as.data.frame(DF); names(DF) <- tolower(names(DF)); return(DF) }
+  raw <- readr::read_lines(path); if (!length(raw)) stop("File empty: ", path)
+  first <- raw[1]; sep <- if (grepl("\\|", first)) "\\|" else if (grepl("\t", first)) "\t" else if (grepl(";", first)) ";" else ","
+  hdr <- strsplit(first, sep)[[1]]
+  rows <- raw[-1]
+  mat <- t(vapply(rows, function(x){
+    parts <- strsplit(x, sep)[[1]]
+    length(parts) <- length(hdr); parts[is.na(parts)] <- ""
+    parts
+  }, character(length(hdr))))
+  DF <- as.data.frame(mat, stringsAsFactors=FALSE); names(DF) <- tolower(trimws(hdr)); DF
+}
+
+#' Load input by path, Excel, or data.frame
+#' @param data data.frame or path or special key 'cora'
+#' @param sheet sheet index/name for Excel
+#' @return tibble with lower-cased names
+#' @export
+er_load_input <- function(data, sheet=NULL){
+  if (is.data.frame(data)) { df <- tibble::as_tibble(data); names(df) <- tolower(names(df)); return(df) }
+  if (is.character(data) && length(data) == 1L) {
+    key <- tolower(data)
+    if (key == "cora") {
+      if (!requireNamespace("cora", quietly=TRUE)) stop("Package 'cora' not installed.")
+      df <- tibble::as_tibble(get("cora", envir=asNamespace("cora"))); names(df) <- tolower(names(df)); return(df)
+    }
+    p <- data; ext <- tolower(tools::file_ext(p))
+    if (ext %in% c("xlsx","xls")) df <- readxl::read_excel(p, sheet = sheet %||% 1L) %>% tibble::as_tibble()
+    else {
+      df <- tryCatch(data.table::fread(p, showProgress=TRUE) %>% tibble::as_tibble(), error=function(e) NULL)
+      if (is.null(df)) df <- tibble::as_tibble(er_read_pipe_or_fix(p))
+      if (ncol(df) == 1) df <- tibble::as_tibble(er_read_pipe_or_fix(p))
+    }
+    names(df) <- tolower(names(df)); return(df)
+  }
+  stop("Unsupported 'data'. Provide data.frame, path/URL, or 'cora'.")
+}
+
+#' Read NC voter registration CSV splits
+#' @param root folder
+#' @param which "5","10","all"
+#' @return tibble
+#' @export
+ncvr_read <- function(root, which=c("5","10","all")){
+  which <- match.arg(which)
+  all_csv <- list.files(root, pattern="\\.csv$", full.names=TRUE, recursive=TRUE)
+  if (!length(all_csv)) stop("No CSVs found under: ", root)
+  sel <- switch(which,
+                "5" = all_csv[grepl("_nump_5\\.csv$", basename(all_csv))],
+                "10"= all_csv[grepl("_nump_10\\.csv$", basename(all_csv))],
+                "all" = all_csv)
+  if (!length(sel)) stop("No files matched split '", which, "'.")
+  DT <- data.table::rbindlist(lapply(sel, function(p) data.table::fread(p, showProgress=FALSE)), use.names=TRUE, fill=TRUE)
+  df <- tibble::as_tibble(DT); names(df) <- tolower(names(df)); df
+}
+
+#' Guess NCVR-like fields
+#' @param df data.frame
+#' @return character vector of fields
+#' @export
+ncvr_guess_fields <- function(df){
+  nms <- names(df)
+  pick1 <- function(pats){
+    hits <- unique(unlist(lapply(pats, function(p) grep(p, nms, perl=TRUE, value=TRUE))))
+    if (length(hits)) hits[1] else NA_character_
+  }
+  first  <- pick1(c("^first(_|)name$", "^voter_?first_?name$", "^first$"))
+  middle <- pick1(c("^middle(_|)name$", "^voter_?middle_?name$", "^middle$", "^mi(ddle)?_?name?$"))
+  last   <- pick1(c("^last(_|)name$", "^voter_?last_?name$", "^surname$", "^last$"))
+  street <- pick1(c("^res(idence)?_?street(_|)address$", "^res_?addr.*$", "^res_?street.*$", "^address(_1)?$"))
+  city   <- pick1(c("^res(idence)?_?city(_|)(desc)?$", "^res_?city$", "^city(_desc)?$"))
+  state  <- pick1(c("^res(idence)?_?state(_|)(cd|code)?$", "^res_?state$", "^state(_cd|_code)?$"))
+  zip    <- pick1(c("^res(idence)?_?zip(_|)(code)?$", "^res_?zip$", "^zip(_code)?$"))
+  fields <- c(first, middle, last, street, city, state, zip)
+  fields <- fields[!is.na(fields)]
+  if (!length(fields)) return(NULL)
+  fields
+}
+
+
+########################################
+# File: D:/erbot/R/03-select.R
+########################################
+
+#' Select ID + build normalized text_for_matching column
+#' @importFrom tibble tibble
+#' @importFrom stringr str_replace_all str_trim
+#' @importFrom stringi stri_trans_nfkc
+#' @param df data.frame
+#' @param id_col optional id name
+#' @param fields vector of fields to concatenate
+#' @param normalize logical
+#' @param auto_fields logical
+#' @return tibble with id and text_for_matching
+#' @export
+er_select_fields <- function(df,
+                             id_col=NULL, fields=NULL, extra_fields=NULL,
+                             id_candidates=c("id","affiliation_id","record_id","rec_id","docid","rowid","paper_id"),
+                             text_candidates=c("title","name","raw_title","string","text","affiliation","aggregate value","clean ag.value"),
+                             embed_candidates=c("embedded clean ag.value","embedded ag.value","emb","embedding","vector","embedding_clean"),
+                             normalize=TRUE, auto_fields=TRUE, max_auto_fields=5){
+  names(df) <- tolower(names(df))
+
+  # pick id col
+  if (is.null(id_col)) {
+    id_col <- intersect(id_candidates, names(df))[1]
+    if (is.na(id_col)) { df$id <- as.character(seq_len(nrow(df))); id_col <- "id" }
+  } else stopifnot(id_col %in% names(df))
+
+  # pick text fields
+  if (is.null(fields) || !length(fields)) {
+    main <- intersect(text_candidates, names(df))[1]
+    if (!is.na(main)) {
+      fields <- main
+    } else if (auto_fields) {
+      fields <- er_guess_text_fields(df, id_candidates, embed_candidates, max_auto_fields)
+      if (!length(fields)) stop("No usable text fields; pass fields= or rename columns.")
+      message("Auto-selected fields: ", paste(fields, collapse=" | "))
+    } else {
+      stop("No text fields. Supply fields= or ensure one of: ", paste(text_candidates, collapse=", "))
+    }
+  } else {
+    fields <- tolower(fields)
+    fields <- fields[fields %in% names(df)]
+    if (!length(fields)) stop("Requested fields not found in data.")
+  }
+
+  # build text_for_matching WITHOUT dplyr pronouns
+  vals <- df[, fields, drop = FALSE]
+  # ensure character
+  for (jj in seq_along(vals)) {
+    vals[[jj]] <- as.character(vals[[jj]])
+    vals[[jj]][is.na(vals[[jj]])] <- ""
+  }
+  txt <- if (ncol(vals) == 1L) {
+    vals[[1]]
+  } else {
+    apply(vals, 1L, function(row) paste(row, collapse = " "))
+  }
+
+  if (normalize) {
+    txt <- txt |>
+      stringi::stri_trans_nfkc() |>
+      tolower() |>
+      stringr::str_replace_all("\\s+"," ") |>
+      stringr::str_trim()
+  }
+  txt[is.na(txt) | txt == ""] <- " "
+
+  tibble::tibble(
+    id = as.character(df[[id_col]]),
+    text_for_matching = txt
+  )
+}
+
+
+########################################
+# File: D:/erbot/R/04-features.R
+########################################
+
+#' Parse a column of serialized embeddings to a numeric matrix
+#' @param x character/any
+#' @return matrix (rows = records, cols = inferred dim)
+#' @export
+er_safe_parse_embedding_col <- function(x){
+  x <- as.character(x); x[is.na(x)] <- ""
+  num_pat <- "[-+]?(?:\\d*\\.\\d+|\\d+)(?:[eE][-+]?\\d+)?"
+  lst <- regmatches(x, gregexpr(num_pat, x, perl=TRUE))
+  lens <- lengths(lst); if (all(lens==0L)) stop("No numeric tokens found in embedding col.")
+  tab <- sort(table(lens[lens>0L]), decreasing=TRUE); d <- if (length(tab)) as.integer(names(tab)[1]) else max(lens)
+  m <- matrix(NA_real_, nrow=length(lst), ncol=d)
+  for (i in seq_along(lst)) { v <- suppressWarnings(as.numeric(lst[[i]])); if (length(v)) m[i, seq_len(min(length(v), d))] <- v[seq_len(min(length(v), d))] }
+  storage.mode(m) <- "double"; m
+}
+
+#' TF-IDF + truncated SVD features
+#' @param text_vec character vector
+#' @param svd_dim target dimension
+#' @return dense numeric matrix
+#' @export
+er_features_tfidf_svd <- function(text_vec, svd_dim=100){
+  it <- text2vec::itoken(text_vec, tokenizer=text2vec::word_tokenizer, progressbar=FALSE)
+  vocab <- text2vec::create_vocabulary(it)
+  vec <- text2vec::vocab_vectorizer(vocab)
+  dtm <- text2vec::create_dtm(it, vec)
+  tfidf <- text2vec::TfIdf$new(); Xtf <- tfidf$fit_transform(dtm)
+  k_dim <- max(2L, min(svd_dim, min(dim(Xtf))-1L))
+  set.seed(42); svd_res <- irlba::irlba(Xtf, nv=k_dim)
+  svd_res$u %*% diag(svd_res$d)
+}
+
+
+########################################
+# File: D:/erbot/R/05-methods-basic.R
+########################################
+
+#' K-means clustering on features
+#' @export
+er_kmeans_from_X <- function(X, k=10, seed=123){ set.seed(seed); stats::kmeans(X, centers=k, nstart=20)$cluster }
+
+#' Hierarchical clustering (Ward.D2) with cosine distance
+#' @export
+er_hclust_from_X <- function(X, k=10, method="ward.D2"){
+  D <- er_cosine_dist(X); hc <- stats::hclust(stats::as.dist(D), method=method); stats::cutree(hc, k=k)
+}
+
+#' PAM clustering with cosine distance
+#' @export
+er_pam_from_X <- function(X, k=10){
+  D <- er_cosine_dist(X); cluster::pam(stats::as.dist(D), k=k)$clustering
+}
+
+
+########################################
+# File: D:/erbot/R/06-methods-graph.R
+########################################
+
+#' Louvain clustering from a precomputed similarity matrix
+#'
+#' Build a graph from a symmetric sparse similarity matrix and run Louvain
+#' community detection after dropping edges below a similarity threshold.
+#'
+#' @param S A symmetric sparse similarity matrix (class `dgCMatrix`) with
+#'   diagonal set to 1. Larger values mean more similar.
+#' @param min_sim Numeric threshold in `[0, 1]`. Edges with similarity
+#'   < `min_sim` are removed before clustering.
+#' @return An integer vector of cluster labels (length `nrow(S)`).
+#' @export
+er_louvain_from_S <- function(S, min_sim = 0.0) {
+  stopifnot(inherits(S, "sparseMatrix"))
+  E <- Matrix::summary(S)
+  E <- E[E$i != E$j & is.finite(E$x) & !is.na(E$x) & E$x >= min_sim, , drop = FALSE]
+  if (!nrow(E)) return(rep(1L, nrow(S)))
+  E <- E[E$i < E$j, , drop = FALSE]
+  G <- igraph::graph_from_data_frame(E[, c("i","j")], directed = FALSE,
+                                     vertices = data.frame(name = seq_len(nrow(S))))
+  igraph::E(G)$weight <- E$x
+  cl <- igraph::cluster_louvain(G, weights = igraph::E(G)$weight)
+  memb <- rep(NA_integer_, nrow(S))
+  v_ids <- as.integer(igraph::V(G)$name)
+  memb[v_ids] <- igraph::membership(cl)
+  if (anyNA(memb)) {
+    maxlab <- if (all(is.na(memb))) 0L else max(memb, na.rm = TRUE)
+    na_idx <- which(is.na(memb))
+    memb[na_idx] <- maxlab + seq_along(na_idx)
+  }
+  memb
+}
+
+#' Louvain on a kNN graph (cosine over features)
+#'
+#' Builds a k-nearest-neighbor graph from a feature matrix using cosine
+#' similarity, optionally prunes edges below a threshold, then runs Louvain
+#' community detection.
+#'
+#' @param X Numeric feature matrix (rows = items).
+#' @param knn Integer, number of neighbors per node (>= 1).
+#' @param min_sim Numeric in `[0, 1]`; edges with similarity below this
+#'   are dropped before clustering.
+#' @return A list with:
+#'   \itemize{
+#'     \item `labels`: integer cluster labels (length `nrow(X)`).
+#'     \item `graph`: the constructed `igraph` object.
+#'   }
+#' @export
+er_louvain_knn <- function(X, knn = 10, min_sim = 0.0) {
+  rs <- sqrt(rowSums(X^2)); rs[rs==0] <- 1; Xn <- X/rs
+  knn_use <- max(1L, min(knn, nrow(Xn)-1L))
+  nn <- FNN::get.knn(Xn, k=knn_use)
+  sims <- vapply(seq_len(nrow(Xn)), function(i) as.numeric(Xn[i,,drop=FALSE] %*% t(Xn[nn$nn.index[i,],,drop=FALSE])), numeric(knn_use))
+  keep <- sims >= min_sim
+  edf <- cbind(from = rep(seq_len(nrow(Xn)), each=knn_use)[keep], to = as.vector(nn$nn.index)[keep])
+  if (!length(edf)) return(list(labels=rep(1L, nrow(Xn)), graph=igraph::make_empty_graph(nrow(Xn))))
+  g <- igraph::graph_from_edgelist(matrix(edf, ncol=2), directed=FALSE) |> igraph::simplify()
+  list(labels = igraph::membership(igraph::cluster_louvain(g)), graph = g)
+}
+
+
+#' kNN clustering over embeddings with cosine threshold
+#'
+#' Runs a kNN graph on embedding vectors using cosine similarity and keeps
+#' only edges above `cos_thresh`, then returns connected components as labels.
+#'
+#' @param emb_mat Numeric matrix of embeddings (rows = items).
+#' @param k Integer, neighbors per node (>= 1).
+#' @param cos_thresh Numeric in `[0, 1]`; keep edges with cosine >= this value.
+#' @return Integer vector of cluster labels (length `nrow(emb_mat)`).
+#' @export
+er_embed_knn <- function(emb_mat, k=15, cos_thresh=0.88){
+  if (!is.matrix(emb_mat)) emb_mat <- as.matrix(emb_mat); storage.mode(emb_mat) <- "double"
+  n <- nrow(emb_mat); if (n < 2) return(rep(1L, n))
+  nr <- sqrt(rowSums(emb_mat^2, na.rm=TRUE)); valid <- is.finite(nr) & nr > 0
+  out <- seq_len(n); if (sum(valid) < 2) return(out)
+  X <- emb_mat[valid,,drop=FALSE]; X <- X / nr[valid]; k_eff <- max(1L, min(k, nrow(X)-1L))
+  knn <- FNN::get.knn(X, k=k_eff)
+  edges <- vector("list", nrow(X))
+  for (i in seq_len(nrow(X))) {
+    idx <- knn$nn.index[i,]; sims_i <- as.numeric(X[i,,drop=FALSE] %*% t(X[idx,,drop=FALSE]))
+    keep <- is.finite(sims_i) & sims_i >= cos_thresh
+    if (any(keep)) edges[[i]] <- cbind(i, idx[keep])
+  }
+  edges <- do.call(rbind, edges); verts <- data.frame(name = as.character(seq_len(nrow(X))))
+  if (!is.null(edges) && nrow(edges) > 0) {
+    edf <- data.frame(from = as.character(edges[,1]), to = as.character(edges[,2]))
+    g <- igraph::graph_from_data_frame(edf, directed=FALSE, vertices=verts) |> igraph::simplify()
+  } else { g <- igraph::make_empty_graph(n = nrow(X)); igraph::V(g)$name <- as.character(seq_len(nrow(X))) }
+  memb_valid <- igraph::components(g)$membership; out[valid] <- as.integer(memb_valid); out
+}
+
+
+########################################
+# File: D:/erbot/R/06b-mst-sn-edit.R
+########################################
+
+#' MST or Sorted-Neighborhood (SN) + edit-distance clustering
+#'
+#' Builds links between near-duplicate strings using a Sorted-Neighborhood
+#' pass with an edit-distance threshold. Optionally, also builds a
+#' k-nearest-neighbor graph in the sorted order and prunes a Minimum
+#' Spanning Tree (MST) using a robust cut rule.
+#'
+#' The final graph is the union of:
+#' * SN edges where \code{stringdist(text[i], text[j], method = sn_method) <= sn_thresh}
+#'   for pairs within a sliding window of size \code{sn_window} on the
+#'   lexicographically sorted normalized text, and
+#' * (optional) MST edges whose distances are \emph{not} outliers:
+#'   \code{d <= median(d) + mst_cut_ratio * MAD(d)}.
+#'
+#' Connected components of this union graph define clusters.
+#'
+#' @param text_vec Character vector of strings to cluster.
+#' @param mst_cut_ratio Non-negative numeric controlling how aggressively to cut
+#'   long MST edges; larger values keep more edges. Default \code{5}.
+#' @param mst_k Optional integer. If provided, also build a k-NN graph in the
+#'   sorted order (each node connects to the next \code{mst_k} items) with
+#'   weights equal to edit distance, then compute its MST and prune with the
+#'   robust rule above.
+#' @param sn_window Integer sliding-window size (>= 1) for sorted-neighborhood
+#'   candidate pairs. Default \code{40}.
+#' @param sn_method String distance method for \code{stringdist::stringdist};
+#'   e.g., \code{"jw"} (Jaro–Winkler), \code{"lv"} (Levenshtein). Default \code{"jw"}.
+#' @param sn_thresh Numeric in `[0, 1]` for methods returning distances in that
+#'   range (e.g., Jaro–Winkler). Create an SN edge if distance <= \code{sn_thresh}.
+#'   Default \code{0.12}.
+#'
+#' @return Integer vector of cluster labels (length = \code{length(text_vec)}).
+#' @export
+er_mst_or_sn_edit <- function(text_vec,
+                              mst_cut_ratio = 5,
+                              mst_k = NULL,
+                              sn_window = 40,
+                              sn_method = "jw",
+                              sn_thresh = 0.12) {
+  n <- length(text_vec)
+  if (n <= 1) return(rep(1L, n))
+
+  # Normalize text lightly for sorting
+  txt <- as.character(text_vec)
+  txt[is.na(txt)] <- ""
+  txt <- stringi::stri_trans_nfkc(txt)
+  txt <- tolower(txt)
+  txt <- stringr::str_squish(txt)
+
+  # Sorted-Neighborhood ordering
+  ord <- order(txt, method = "radix")
+  inv <- integer(n); inv[ord] <- seq_len(n)
+
+  # --- SN edges (threshold on edit distance) ---
+  sn_i <- integer(0); sn_j <- integer(0)
+  if (sn_window >= 1) {
+    win <- max(1L, as.integer(sn_window))
+    for (a in seq_len(n - 1L)) {
+      bmax <- min(n, a + win)
+      if (a < bmax) {
+        i <- ord[a]
+        js <- ord[(a + 1L):bmax]
+        # compute distances to those candidates
+        dists <- vapply(js, function(j) {
+          stringdist::stringdist(txt[i], txt[j], method = sn_method)
+        }, numeric(1))
+        keep <- which(is.finite(dists) & !is.na(dists) & dists <= sn_thresh)
+        if (length(keep)) {
+          sn_i <- c(sn_i, rep(i, length(keep)))
+          sn_j <- c(sn_j, js[keep])
+        }
+      }
+    }
+  }
+
+  # --- Optional MST from sorted k-NN in order space ---
+  mst_i <- integer(0); mst_j <- integer(0); mst_w <- numeric(0)
+  if (!is.null(mst_k) && is.finite(mst_k) && mst_k >= 1) {
+    k <- max(1L, as.integer(mst_k))
+    # Build k "forward" neighbors per position in sorted order
+    for (a in seq_len(n - 1L)) {
+      bmax <- min(n, a + k)
+      if (a < bmax) {
+        i <- ord[a]
+        js <- ord[(a + 1L):bmax]
+        if (length(js)) {
+          dists <- vapply(js, function(j) {
+            stringdist::stringdist(txt[i], txt[j], method = sn_method)
+          }, numeric(1))
+          good <- is.finite(dists) & !is.na(dists)
+          if (any(good)) {
+            mst_i <- c(mst_i, rep(i, sum(good)))
+            mst_j <- c(mst_j, js[good])
+            mst_w <- c(mst_w, dists[good])  # distances as weights
+          }
+        }
+      }
+    }
+    if (length(mst_w)) {
+      # Create graph and compute MST
+      g0 <- igraph::graph_from_edgelist(cbind(mst_i, mst_j), directed = FALSE)
+      igraph::E(g0)$weight <- mst_w
+      Tm <- igraph::mst(g0, weights = igraph::E(g0)$weight)
+      w_mst <- igraph::E(Tm)$weight
+      med <- stats::median(w_mst, na.rm = TRUE)
+      madv <- stats::mad(w_mst, center = med, constant = 1, na.rm = TRUE)
+      thr <- med + max(0, mst_cut_ratio) * (if (is.finite(madv)) madv else 0)
+      keep_e <- which(is.finite(w_mst) & w_mst <= thr)
+      if (length(keep_e)) {
+        ep <- igraph::ends(Tm, es = igraph::E(Tm)[keep_e], names = FALSE)
+        mst_i <- as.integer(ep[, 1]); mst_j <- as.integer(ep[, 2])
+      } else {
+        mst_i <- mst_j <- integer(0)
+      }
+    }
+  }
+
+  # --- Union of edges (SN ∪ pruned MST) ---
+  ei <- c(sn_i, mst_i); ej <- c(sn_j, mst_j)
+  if (!length(ei)) {
+    return(seq_len(n))  # all singletons
+  }
+
+  g <- igraph::graph_from_edgelist(cbind(ei, ej), directed = FALSE)
+  # ensure isolated vertices exist
+  if (igraph::vcount(g) < n) {
+    g <- igraph::add_vertices(g, n - igraph::vcount(g), name = as.character(setdiff(seq_len(n), as.integer(igraph::V(g)$name))))
+  }
+  memb <- igraph::components(g)$membership
+  # membership is aligned to vertex names; map to 1..n
+  out <- integer(n)
+  vn <- as.integer(igraph::V(g)$name)
+  out[vn] <- as.integer(memb)
+  out
+}
+
+
+########################################
+# File: D:/erbot/R/07-similarity-multifield.R
+########################################
+
+#' Build a multi-field similarity (sparse)
+#' @param df data.frame containing all fields in spec
+#' @param spec list of lists: list(name=..., type=..., w=..., tau? for numeric/year)
+#' @param block_key optional vector to limit pairwise comps within blocks
+#' @param top_k keep top-k neighbors per row (symmetric)
+#' @return sparse similarity matrix (Diagonal on self = 1)
+#' @export
+er_similarity_multifield <- function(df, spec, block_key = NULL, top_k = 30) {
+  `%||%` <- get("%||%", asNamespace("erbot"))
+  .sim_text_lev <- function(a,b){ if (is.na(a)||is.na(b)||a==""||b=="") return(NA_real_); m <- max(nchar(a), nchar(b)); if (m==0) return(NA_real_); 1 - stringdist::stringdist(a,b,"lv")/m }
+  .sim_text_jw  <- function(a,b){ if (is.na(a)||is.na(b)||a==""||b=="") return(NA_real_); 1 - stringdist::stringdist(a,b,"jw") }
+  .tokenize     <- function(x){ x <- tolower(x %||% ""); x <- gsub("[^[:alnum:]]+"," ",x); x <- stringr::str_squish(x); if (identical(x,"")) character(0) else unique(strsplit(x,"\\s+")[[1]]) }
+  .sim_text_jacc<- function(a,b){ if (is.na(a)||is.na(b)||a==""||b=="") return(NA_real_); A <- .tokenize(a); B <- .tokenize(b); if (!length(A)&&!length(B)) return(NA_real_); inter <- length(intersect(A,B)); uni <- length(union(A,B)); if (uni==0) return(NA_real_); inter/uni }
+  .sim_cat      <- function(a,b){ if (is.na(a)||is.na(b)) return(NA_real_); as.numeric(identical(as.character(a), as.character(b))) }
+  .sim_num      <- function(a,b,range_max,tau=1){ if (is.na(a)||is.na(b)) return(NA_real_); if (!is.finite(range_max) || range_max <= 0) return(NA_real_); d <- abs(as.numeric(a) - as.numeric(b)) / range_max; exp(-(d / tau)) }
+  .keep_topk    <- function(S, k){
+    n <- nrow(S); ki <- kj <- integer(0); kx <- numeric(0)
+    for (i in seq_len(n)) {
+      st <- S@p[i]+1L; en <- S@p[i+1L]; if (en < st) next
+      cols <- S@i[st:en] + 1L; vals <- S@x[st:en]
+      self <- which(cols==i); others <- setdiff(seq_along(cols), self)
+      take <- integer(0)
+      if (length(others)) take <- others[head(order(vals[others], decreasing=TRUE), k)]
+      if (length(self)) take <- c(self, take)
+      ki <- c(ki, rep(i, length(take))); kj <- c(kj, cols[take]); kx <- c(kx, vals[take])
+    }
+    S2 <- Matrix::sparseMatrix(i=c(ki,kj), j=c(kj,ki), x=c(kx,kx), dims=dim(S))
+    diag(S2) <- 1
+    S2
+  }
+
+  n <- nrow(df); if (is.null(block_key)) block_key <- rep("ALL", n)
+  ukeys <- unique(block_key[!is.na(block_key)])
+
+  num_ranges <- list()
+  for (sp in spec) {
+    if (sp$type %in% c("numeric","year")) {
+      vv <- suppressWarnings(as.numeric(df[[sp$name]]))
+      vv <- vv[is.finite(vv)]
+      num_ranges[[sp$name]] <- if (length(vv) >= 2) diff(range(vv)) else NA_real_
+    }
+  }
+
+  I <- J <- integer(0); X <- numeric(0)
+  for (bk in ukeys) {
+    idx <- which(block_key == bk)
+    if (length(idx) <= 1) next
+    for (ii in seq_len(length(idx) - 1L)) {
+      i <- idx[ii]
+      js <- idx[(ii+1L):length(idx)]
+      svec <- numeric(length(js))
+      for (kk in seq_along(js)) {
+        j <- js[kk]; num <- 0; den <- 0
+        for (sp in spec) {
+          f <- sp$name; w <- sp$w; a <- df[[f]][i]; b <- df[[f]][j]
+          sij <- switch(sp$type,
+                        lev        = .sim_text_lev(a,b),
+                        jw         = .sim_text_jw(a,b),
+                        jaccard    = .sim_text_jacc(a,b),
+                        categorical= .sim_cat(a,b),
+                        numeric    = .sim_num(a,b, num_ranges[[f]], tau=sp$tau %||% 1),
+                        year       = .sim_num(a,b, num_ranges[[f]], tau=sp$tau %||% 0.5),
+                        stop("Unknown type: ", sp$type))
+          if (!is.na(sij)) { num <- num + w*sij; den <- den + w }
+        }
+        s <- if (den>0) num/den else 0
+        svec[kk] <- max(0, min(1, s))
+      }
+      I <- c(I, rep(i, length(js))); J <- c(J, js); X <- c(X, svec)
+    }
+  }
+  keep <- which(!is.na(I) & !is.na(J) & !is.na(X))
+  if (!length(keep)) {
+    S <- Matrix::Diagonal(n = n, x = 1)
+  } else {
+    S <- Matrix::sparseMatrix(i = c(I[keep], J[keep]),
+                              j = c(J[keep], I[keep]),
+                              x = c(X[keep], X[keep]),
+                              dims = c(n, n))
+    diag(S) <- 1
+  }
+  if (!is.null(top_k) && top_k > 0) S <- .keep_topk(S, top_k)
+  S
+}
+
+
+########################################
+# File: D:/erbot/R/08-distances-and-sil.R
+########################################
+
+#' Average silhouette from distance
+#' @param labels vector
+#' @param D matrix or dist
+#' @return numeric
+#' @export
+er_silhouette_avg <- function(labels, D){
+  labs <- as.integer(factor(labels))
+  if (length(unique(labs)) < 2) return(NA_real_)
+  sil <- tryCatch(cluster::silhouette(as.integer(factor(labels)), dist = stats::as.dist(D)), error=function(e) NULL)
+  if (is.null(sil)) return(NA_real_)
+  mean(sil[,3], na.rm=TRUE)
+}
+
+#' Pairwise string distances in blocks (with optional progress)
+#' @export
+er_pairwise_stringdist <- function(text_vec, method="jw", block=4000, progress=NULL){
+  n <- length(text_vec)
+  if (n <= 1) return(matrix(0, n, n))
+  if (inherits(progress, "er_progress")) {
+    total_pairs <- n * (n - 1) / 2
+    cat(sprintf("\nComputing pairwise distances [%s] for n=%d (~%.1fM pairs)\n",
+                method, n, total_pairs / 1e6))
+  }
+  D <- matrix(0, n, n)
+  total_pairs <- n * (n - 1) / 2
+  done_pairs <- 0
+  for (i in seq(1, n, by=block)) {
+    i2 <- min(i+block-1, n); xi <- text_vec[i:i2]
+    for (j in seq(i, n, by=block)) {
+      j2 <- min(j+block-1, n); xj <- text_vec[j:j2]
+      sub <- as.matrix(stringdist::stringdistmatrix(xi, xj, method=method))
+      D[i:i2, j:j2] <- sub
+      if (j > i) D[j:j2, i:i2] <- t(sub)
+      new_pairs <- if (i==j) (i2 - i + 1) * (i2 - i) / 2 else (i2 - i + 1) * (j2 - j + 1)
+      done_pairs <- done_pairs + new_pairs
+      if (inherits(progress, "er_progress")) {
+        pct <- 100 * done_pairs / max(1, total_pairs)
+        cat(sprintf("\r Distance progress: %5.1f%%", pct)); flush.console()
+      }
+    }
+  }
+  if (inherits(progress, "er_progress")) cat("\n")
+  D
+}
+
+
+########################################
+# File: D:/erbot/R/09-eval-truth.R
+########################################
+
+#' Locate clustering_agreement() (GCMER or sourced)
+#' @keywords internal
+#' @return function
+#' @export
+er_get_clustering_agreement_fun <- function(){
+  if (exists("clustering_agreement", mode="function")) return(get("clustering_agreement"))
+  if (requireNamespace("GCMER", quietly=TRUE) &&
+      "clustering_agreement" %in% ls(asNamespace("GCMER"))) return(GCMER::clustering_agreement)
+  stop("Need 'clustering_agreement()'. library(GCMER) or source('rcode.R').")
+}
+
+#' Evaluate one set of labels against truth using GCMER metrics
+#' @param pred integer vector
+#' @param truth integer vector
+#' @param metrics character vector of metric names
+#' @return tibble row with metrics
+#' @export
+er_eval_ca_one <- function(pred, truth, metrics=c(
+  "chi2","rand","adj_rand","fowlkes_mallow","mirkin","jaccard",
+  "tpr","fpr","F_measure","meila_heckerman","max_match","van_dongen","mutual_info"
+)){
+  fun <- er_get_clustering_agreement_fun()
+  vec <- fun(as.integer(pred), as.integer(truth), method = metrics)
+  tibble::as_tibble_row(as.list(vec))
+}
+
+#' Convert pairwise truth to clusters
+#' @export
+er_pairs_to_clusters <- function(truth_pairs, id1="id1", id2="id2"){
+  stopifnot(all(c(id1,id2) %in% names(truth_pairs)))
+  pairs <- truth_pairs %>% dplyr::transmute(id1=as.character(.data[[id1]]), id2=as.character(.data[[id2]])) %>%
+    dplyr::filter(!is.na(id1), !is.na(id2), id1!="", id2!="", id1!=id2) %>%
+    dplyr::mutate(a=pmin(id1,id2), b=pmax(id1,id2)) %>% dplyr::distinct(a,b,.keep_all=FALSE)
+  if (!nrow(pairs)) return(tibble::tibble(id=character(), cluster_id=integer()))
+  g <- igraph::graph_from_data_frame(pairs, directed=FALSE)
+  memb <- igraph::components(g)$membership
+  tibble::tibble(id=names(memb), cluster_id=as.integer(memb))
+}
+
+#' Truth ingestion from various formats
+#' @export
+er_truth_from_any <- function(truth, sep_pair="\\|",
+                              id_candidates=c("id","record_id","rec_id","docid","rowid","paper_id")){
+  if (is.null(truth)) return(NULL)
+  if (is.vector(truth) && !is.null(names(truth))) return(tibble::tibble(id=as.character(names(truth)), cluster_id=as.integer(truth)))
+  if (is.character(truth) && length(truth)==1L) {
+    p <- truth; ext <- tolower(tools::file_ext(p))
+    if (ext %in% c("csv","tsv","txt","psv")) truth <- readr::read_delim(p, delim = ifelse(ext=="tsv","\t", ","), show_col_types=FALSE, guess_max=1e6)
+    else if (ext %in% c("xlsx","xls")) truth <- readxl::read_excel(p) else truth <- data.table::fread(p, showProgress = TRUE)
+  }
+  if (is.data.frame(truth)) {
+    names(truth) <- tolower(names(truth))
+    if (ncol(truth)==1L) {
+      col <- names(truth)[1]
+      pairs <- truth %>% dplyr::transmute(tmp=.data[[col]]) %>% dplyr::filter(!is.na(tmp), tmp!="") %>%
+        tidyr::separate(tmp, c("id1","id2"), sep=sep_pair, remove=TRUE, fill="right", extra="drop")
+      return(er_pairs_to_clusters(pairs,"id1","id2"))
+    }
+    if (all(c("id1","id2") %in% names(truth))) return(er_pairs_to_clusters(truth,"id1","id2"))
+    id_truth <- intersect(names(truth), id_candidates); id_truth <- if (length(id_truth)) id_truth[1] else names(truth)[1]
+    lab_col <- setdiff(names(truth), id_truth)[1]; stopifnot(!is.na(lab_col))
+    return(truth %>% dplyr::transmute(id = as.character(.data[[id_truth]]), cluster_id = .data[[lab_col]]) %>% dplyr::distinct(id,.keep_all=TRUE))
+  }
+  stop("Unsupported truth type. Provide pair list, id+cluster table, named vector, or a path.")
+}
+
+
+########################################
+# File: D:/erbot/R/10-gc.R
+########################################
+
+#' Locate resolve_entities() (GCMER or sourced)
+#' @keywords internal
+#' @return function
+#' @export
+er_get_resolve_entities_fun <- function(){
+  if (exists("resolve_entities", mode="function")) return(get("resolve_entities"))
+  if (requireNamespace("GCMER", quietly=TRUE) &&
+      "resolve_entities" %in% ls(asNamespace("GCMER"))) return(GCMER::resolve_entities)
+  stop("Need 'resolve_entities()' for Graph Coloring. library(GCMER) or source('rcode.R').")
+}
+
+#' Graph Coloring resolution from text via threshold sweep
+#' @param text_vec character
+#' @param thresholds numeric vector
+#' @param gc_method one of 'lf','sl','rlf'
+#' @param dist_method stringdist method
+#' @param tune_metric metric to maximize if truth present
+#' @param truth optional vector aligned to text (or named by id)
+#' @param progress optional er_progress
+#' @return list(labels, best_threshold, tuning, thresholds)
+#' @export
+er_gc_from_text <- function(text_vec, thresholds, gc_method=c("lf","sl","rlf"),
+                            dist_method="jw", tune_metric="adj_rand", truth=NULL,
+                            ca_metrics=c("chi2","rand","adj_rand","fowlkes_mallow","mirkin","jaccard","tpr","fpr","F_measure","meila_heckerman","max_match","van_dongen","mutual_info"),
+                            progress=NULL, dist_block=4000){
+  gc_method <- match.arg(gc_method)
+  re_fun <- er_get_resolve_entities_fun()
+  ca_fun <- er_get_clustering_agreement_fun()
+  D <- er_pairwise_stringdist(text_vec, method=dist_method, block=dist_block, progress=progress)
+  res <- re_fun(D, thresholds=thresholds, method=gc_method)
+  ents <- res$ents; if (!is.matrix(ents)) ents <- as.matrix(ents); colnames(ents) <- paste0("thr_", thresholds)
+  tuning <- NULL; best_idx <- 1L
+  if (!is.null(truth)) {
+    rows <- lapply(seq_along(thresholds), function(j){
+      vec <- ca_fun(as.integer(ents[,j]), as.integer(truth), method=ca_metrics)
+      tibble::as_tibble_row(as.list(vec)) |> dplyr::mutate(threshold = thresholds[j])
+    })
+    tuning <- dplyr::bind_rows(rows); stopifnot(tune_metric %in% names(tuning))
+    best_idx <- order(tuning[[tune_metric]], decreasing=TRUE)[1]
+  } else {
+    sil <- vapply(seq_len(ncol(ents)), function(j) er_silhouette_avg(ents[,j], D), numeric(1))
+    tuning <- tibble::tibble(threshold = thresholds, silhouette = sil)
+    best_idx <- which.max(sil); if (!length(best_idx) || !is.finite(sil[best_idx])) best_idx <- 1L
+  }
+  list(labels=as.integer(ents[,best_idx]), best_threshold=thresholds[best_idx], tuning=tuning, thresholds=thresholds)
+}
+
+
+########################################
+# File: D:/erbot/R/11-reporting.R
+########################################
+
+#' Quick base plotting for a tuning curve
+#' @export
+er_plot_curve <- function(df, x_col, y_col, main="", xlab=NULL, ylab=NULL){
+  if (is.null(df) || !all(c(x_col,y_col) %in% names(df))) return(invisible(FALSE))
+  x <- df[[x_col]]; y <- df[[y_col]]; if (all(!is.finite(y))) return(invisible(FALSE))
+  xlab <- xlab %||% x_col; ylab <- ylab %||% y_col
+  plot(x,y,type="b",pch=16,main=main,xlab=xlab,ylab=ylab); abline(h=max(y[is.finite(y)]), lty=3, col="gray50")
+  invisible(TRUE)
+}
+
+#' Pick GC metric name from tuning table
+#' @keywords internal
+#' @export
+er_pick_gc_metric <- function(gc_curve, fallback_metric="adj_rand"){
+  if (is.null(gc_curve)) return(NULL)
+  if ("silhouette" %in% names(gc_curve)) return("silhouette")
+  if (fallback_metric %in% names(gc_curve)) return(fallback_metric)
+  for (m in c("adj_rand","rand","mutual_info","F_measure","jaccard")) if (m %in% names(gc_curve)) return(m)
+  NULL
+}
+
+#' Autoplot tuning panels
+#' @export
+er_autoplot_tuning <- function(res, metric=NULL){
+  metric <- metric %||% (res$details$params$tune_metric %||% "adj_rand")
+  gc_metric <- er_pick_gc_metric(res$tuning$gc_threshold_curve, fallback_metric=metric)
+  panels <- sum(!sapply(list(res$tuning$kmeans_sil_curve,res$tuning$hclust_sil_curve,res$tuning$pam_sil_curve,res$tuning$gc_threshold_curve), is.null))
+  if (!panels) return(invisible(FALSE))
+  nrow <- if (panels <= 2) 1 else 2; ncol <- ceiling(panels / nrow)
+  old <- par(mfrow=c(nrow,ncol), mar=c(4,4,3,1)); on.exit(par(old), add=TRUE)
+  if (!is.null(res$tuning$kmeans_sil_curve)) er_plot_curve(res$tuning$kmeans_sil_curve,"k","silhouette","KMeans: silhouette vs k")
+  if (!is.null(res$tuning$hclust_sil_curve)) er_plot_curve(res$tuning$hclust_sil_curve,"k","silhouette","HC (Ward.D2): silhouette vs k")
+  if (!is.null(res$tuning$pam_sil_curve))    er_plot_curve(res$tuning$pam_sil_curve,"k","silhouette","PAM: silhouette vs k")
+  if (!is.null(res$tuning$gc_threshold_curve) && !is.null(gc_metric))
+    er_plot_curve(res$tuning$gc_threshold_curve,"threshold",gc_metric,sprintf("GC: %s vs threshold",gc_metric),"threshold",gc_metric)
+  invisible(TRUE)
+}
+
+#' Draw a small table on a graphics device
+#' @export
+er_draw_table <- function(df, title = NULL, base_size = 8, max_rows_text = 60) {
+  dfc <- as.data.frame(lapply(df, function(col) {
+    if (is.list(col)) {
+      vapply(col, function(x) paste0(as.character(unlist(x)), collapse = ", "), character(1))
+    } else if (inherits(col, "POSIXt")) {
+      format(col)
+    } else {
+      as.character(col)
+    }
+  }), stringsAsFactors = FALSE, check.names = FALSE)
+
+  if (requireNamespace("gridExtra", quietly = TRUE)) {
+    grid::grid.newpage()
+    if (!is.null(title)) grid::grid.text(title, y = 0.98, gp = grid::gpar(fontsize = base_size + 2, fontface = "bold"))
+    tg <- gridExtra::tableGrob(dfc, rows = NULL, theme = gridExtra::ttheme_minimal(base_size = base_size))
+    grid::pushViewport(grid::viewport(y = 0.94, height = 0.90, just = "top"))
+    grid::grid.draw(tg)
+    grid::popViewport()
+  } else {
+    plot.new()
+    if (!is.null(title)) title(main = title, cex.main = 1)
+    txt <- capture.output(print(utils::head(dfc, max_rows_text)))
+    text(0, 1, paste(txt, collapse = "\n"), adj = c(0, 1), cex = 0.72, family = "mono")
+  }
+}
+
+#' Parameters table for a pipeline result
+#' @export
+er_params_df <- function(res) {
+  tun <- res$tuning
+  par <- res$details$params
+  vals <- list(
+    tun$kmeans_k, tun$hclust_k, tun$pam_k, tun$gc_best_threshold,
+    par$knn_k, par$svd_dim, par$louvain_min_sim, par$cos_thresh,
+    par$sn_window, par$sn_method, par$sn_thresh,
+    par$gc_method, par$gc_dist_method, par$auto_tune, par$tune_metric
+  )
+  fmt <- function(x) {
+    if (length(x) > 1) paste(x, collapse = ", ")
+    else if (is.logical(x)) ifelse(isTRUE(x), "TRUE", "FALSE")
+    else if (is.numeric(x)) as.character(signif(x, 6))
+    else as.character(x)
+  }
+  data.frame(
+    Parameter = c(
+      "kmeans_k","hclust_k","pam_k","gc_best_threshold",
+      "knn_k","svd_dim","louvain_min_sim","cos_thresh",
+      "sn_window","sn_method","sn_thresh",
+      "gc_method","gc_dist_method","auto_tune","tune_metric"
+    ),
+    Value = vapply(vals, fmt, character(1)),
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+}
+
+#' Top GC thresholds table
+#' @export
+er_gc_top_table <- function(res, top_n=5, metric=NULL){
+  gc_curve <- res$tuning$gc_threshold_curve; if (is.null(gc_curve)) return(NULL)
+  metric <- er_pick_gc_metric(gc_curve, fallback_metric = (metric %||% res$details$params$tune_metric %||% "adj_rand"))
+  ord <- order(gc_curve[[metric]], decreasing=TRUE)
+  utils::head(gc_curve[ord, c("threshold", metric), drop=FALSE], top_n)
+}
+
+
+#' Save an organized ER PDF report (backward-compatible, no Rmd)
+#'
+#' Combines legacy `er_main()` report pieces (params, performance, agreement, top items)
+#' with new `er_tune()` benchmarking pages (best-per-method, Top-N, tuning curves,
+#' runtime & peak memory). Automatically adapts to the structure it finds in `res`.
+#'
+#' @param res ER result from `er_main()` (legacy) or `er_tune()` (new). If `res` is
+#'   a list with `$curves`, it will render tuning/benchmark pages; otherwise it renders
+#'   legacy tables and any provided curve data.frames in `res$curves` (list).
+#' @param file Output PDF path.
+#' @param dataset_name Title label.
+#' @param objective Scoring column to highlight best-per-method when `res$curves`
+#'   is present. One of: "silhouette","silhouette_penalized","ch","db_min",
+#'   "modularity","stability","ari","pairwise_f1". Default "silhouette_penalized".
+#' @param top_n Top rows for the Top-N page (if tuning) and for legacy `res$top_items`.
+#' @param digits Rounding for numbers.
+#' @param runtime_sec Optional total runtime in seconds (overrides values inside `res`).
+#' @return (invisible) the output file path.
+#' @examples
+#' \dontrun{
+#' tuned <- er_tune(data=cora, fields=c("title","authors","address"),
+#'                  methods=c("kmeans","louvain","leiden"))
+#' er_save_report_pdf(tuned, "results/cora_report.pdf", "CORA",
+#'                    objective="silhouette_penalized", top_n=5)
+#' }
+#' @import ggplot2
+#' @import gridExtra
+#' @import dplyr
+#' @export
+er_save_report_pdf <- function(res,
+                               file,
+                               dataset_name = "DATASET",
+                               objective    = "silhouette_penalized",
+                               top_n        = 5,
+                               digits       = 5,
+                               runtime_sec  = NULL) {
+
+  # ---- deps (fail clearly) ----
+  if (!requireNamespace("gridExtra", quietly = TRUE)) stop("Please install 'gridExtra'.")
+  if (!requireNamespace("grid", quietly = TRUE))      stop("Please install 'grid'.")
+  has_gg <- requireNamespace("ggplot2", quietly = TRUE)
+  has_dplyr <- requireNamespace("dplyr", quietly = TRUE)
+
+  # ---- tiny helpers ----
+  get_or <- function(x, default = NULL) if (is.null(x)) default else x
+  round_num <- function(df, d) {
+    if (!is.data.frame(df)) return(df)
+    num <- vapply(df, is.numeric, TRUE)
+    if (any(num)) df[num] <- lapply(df[num], round, d)
+    df
+  }
+  paste_fields <- function(x) {
+    if (is.null(x)) return(NA_character_)
+    if (is.character(x)) return(paste(unique(x), collapse = ", "))
+    if (is.list(x) && is.character(unlist(x))) return(paste(unique(unlist(x)), collapse = ", "))
+    NA_character_
+  }
+  split_pages <- function(df, rows_per_page = 30) {
+    n <- nrow(df); if (is.null(n) || n == 0) return(list(df))
+    idx <- split(seq_len(n), ceiling(seq_len(n) / rows_per_page))
+    lapply(idx, function(ii) df[ii, , drop = FALSE])
+  }
+  new_page   <- function() grid::grid.newpage()
+  title_grob <- function(text, y = 0.95, size = 14) {
+    grid::grid.text(text, x = 0.05, y = y, just = c("left","top"),
+                    gp = grid::gpar(fontsize = size, fontface = "bold"))
+  }
+  para_grob  <- function(text, y, size = 11) {
+    grid::grid.text(text, x = 0.05, y = y, just = c("left","top"),
+                    gp = grid::gpar(fontsize = size))
+  }
+  draw_table <- function(df, y, height = 0.75) {
+    tg <- gridExtra::tableGrob(df, rows = NULL)
+    grid::pushViewport(grid::viewport(x = 0.5, y = y, width = 0.94, height = height))
+    on.exit(grid::popViewport(), add = TRUE)
+    grid::grid.draw(tg)
+  }
+
+  # ---- legacy-friendly field harvest ----
+  fields_used <- paste_fields(
+    get_or(res$fields,
+           get_or(get_or(res$params$fields, NULL),
+                  get_or(get_or(res$details$fields, NULL),
+                         get_or(get_or(res$details$params$fields, NULL), NULL)))))
+  n_records <- get_or(res$n_records,
+                      get_or(NROW(get_or(res$data, NULL)),
+                             get_or(get_or(res$details$n, NULL),
+                                    get_or(length(get_or(res$ids, NULL)), NA))))
+  n_clusters <- NA
+  if (!is.null(res$clusters))      n_clusters <- length(unique(res$clusters))
+  if (!is.null(res$labels))        n_clusters <- length(unique(res$labels))
+  if (!is.null(res$best$clusters)) n_clusters <- length(unique(res$best$clusters))
+  if (!is.null(res$best$labels))   n_clusters <- length(unique(res$best$labels))
+  has_embeddings <- get_or(
+    get_or(res$details$has_embeddings, NULL),
+    !is.null(get_or(get_or(res$features$embeddings, NULL), get_or(res$embeddings, NULL)))
+  )
+  runtime_sec <- get_or(runtime_sec, get_or(res$runtime_sec, get_or(res$details$total_runtime, NULL)))
+
+  # ---- params table (legacy) ----
+  param_sources <- list(
+    get_or(res$selected_params, NULL),
+    get_or(res$params, NULL),
+    get_or(res$details$params, NULL)
+  )
+  params_list <- Filter(Negate(is.null), param_sources)
+  params_tbl  <- NULL
+  if (length(params_list)) {
+    flat <- list()
+    for (ps in params_list) {
+      scalars <- ps[vapply(ps, function(v) is.atomic(v) && length(v) == 1, TRUE)]
+      flat <- c(flat, scalars)
+    }
+    if (length(flat)) {
+      params_tbl <- data.frame(
+        Parameter = names(flat),
+        Value     = vapply(flat, as.character, character(1)),
+        row.names = NULL, check.names = FALSE
+      )
+      key_first <- c("kmeans_k","hclust_k","pam_k","gc_best_threshold","knn_k",
+                     "svd_dim","louvain_min_sim","cos_thresh","sn_window",
+                     "sn_method","sn_thresh","gc_method","gc_dist_method",
+                     "auto_tune","tune_metric")
+      ord <- unique(c(intersect(key_first, params_tbl$Parameter), params_tbl$Parameter))
+      params_tbl <- params_tbl[match(ord, params_tbl$Parameter), , drop = FALSE]
+    }
+  }
+
+  # ---- legacy metrics tables ----
+  as_metric_table <- function(x, digits = 5, prefer_method_col = TRUE) {
+    if (is.null(x)) return(NULL)
+    if (is.data.frame(x)) {
+      out <- round_num(x, digits)
+      if (prefer_method_col && !"Method" %in% names(out) && !is.null(rownames(out))) {
+        out <- cbind(Method = rownames(out), out, row.names = NULL)
+      }
+      return(out)
+    }
+    if (is.matrix(x)) {
+      out <- as.data.frame(x, stringsAsFactors = FALSE)
+      if (!"Method" %in% names(out) && !is.null(rownames(out))) {
+        out <- cbind(Method = rownames(out), out, row.names = NULL)
+      }
+      return(round_num(out, digits))
+    }
+    if (is.numeric(x) && !is.null(names(x))) {
+      out <- as.data.frame(as.list(x), stringsAsFactors = FALSE)
+      return(round_num(out, digits))
+    }
+    if (is.list(x)) {
+      ok <- vapply(x, function(el) is.numeric(el) && !is.null(names(el)), TRUE)
+      if (length(ok) && all(ok)) {
+        methods <- names(x)
+        metrics <- unique(unlist(lapply(x, names)))
+        df <- data.frame(Method = methods, check.names = FALSE)
+        for (m in metrics) df[[m]] <- vapply(x, function(el) get_or(el[[m]], NA_real_), numeric(1))
+        return(round_num(df, digits))
+      }
+    }
+    tryCatch({ round_num(as.data.frame(x, stringsAsFactors = FALSE), digits) },
+             error = function(e) NULL)
+  }
+  perf_tbl <- as_metric_table(get_or(res$performance, NULL), digits = digits)
+  agr_tbl  <- as_metric_table(get_or(res$agreement,  NULL), digits = digits)
+
+  # ---- new tuning curves (tidy) or legacy curve list ----
+  tuning_df <- get_or(res$curves, NULL)
+  is_tuning_like <- is.data.frame(tuning_df) &&
+    all(c("method","time_sec","peak_mem_MB") %in% names(tuning_df))
+
+  # For legacy: res$curves may be a list of data.frames -> draw as grobs
+  make_curve_grob <- function(tb, title) {
+    if (!has_gg || !is.data.frame(tb)) return(NULL)
+    xcol <- intersect(c("k","k_knn","min_sim","embed_k","gc_threshold","n_clusters","step","threshold","eps","resolution_parameter"),
+                      names(tb))
+    xcol <- get_or(xcol[1], NULL)
+    ycands <- c("silhouette","silhouette_pen","modularity","ch","db","gap","ari","f1","precision","recall",
+                "adj_rand","rand","jaccard","F_measure","fowlkes_mallow",".score")
+    ycol <- intersect(ycands, names(tb)); ycol <- get_or(ycol[1], NULL)
+    if (is.null(xcol) || is.null(ycol)) {
+      num_cols <- names(tb)[vapply(tb, is.numeric, TRUE)]
+      if (length(num_cols) >= 2) { xcol <- num_cols[1]; ycol <- num_cols[2] } else { return(NULL) }
+    }
+    tb <- round_num(tb, digits)
+    p <- ggplot2::ggplot(tb, ggplot2::aes_string(x = xcol, y = ycol)) +
+      ggplot2::geom_line() + ggplot2::geom_point() +
+      ggplot2::labs(title = title, x = xcol, y = ycol) +
+      ggplot2::theme_minimal(base_size = 11)
+    ggplot2::ggplotGrob(p)
+  }
+  legacy_curve_grobs <- list()
+  if (!is_tuning_like && is.list(res$curves) && length(res$curves)) {
+    for (nm in names(res$curves)) {
+      g <- make_curve_grob(res$curves[[nm]], nm)
+      if (!is.null(g)) legacy_curve_grobs[[nm]] <- g
+    }
+  }
+
+  # ---- create output ----
+  dir.create(dirname(file), recursive = TRUE, showWarnings = FALSE)
+  grDevices::pdf(file, width = 8.5, height = 11, onefile = TRUE)
+  on.exit(try(grDevices::dev.off(), silent = TRUE), add = TRUE)
+
+  # Cover page
+  new_page()
+  title_grob(sprintf("%s — Entity Resolution Report", dataset_name))
+  cover_lines <- c(
+    sprintf("Generated at: %s", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
+    if (!is.na(fields_used)) sprintf("Fields used: %s", fields_used) else NULL,
+    if (!is.na(n_records))   sprintf("Records: %s", format(n_records, big.mark = ",")) else NULL,
+    if (!is.na(n_clusters))  sprintf("Clusters (inferred): %s", format(n_clusters, big.mark = ",")) else NULL,
+    if (!is.null(has_embeddings)) sprintf("Embeddings detected: %s", if (isTRUE(has_embeddings)) "yes" else "no") else NULL,
+    if (!is.null(runtime_sec)) sprintf("Total runtime: %.2f sec", runtime_sec) else NULL
+  )
+  para_grob(paste(cover_lines, collapse = "\n"), y = 0.88)
+
+  # ---- Selected Parameters (legacy) ----
+  if (!is.null(params_tbl) && nrow(params_tbl)) {
+    new_page(); title_grob("Selected Parameters", y = 0.96)
+    draw_table(params_tbl, y = 0.55, height = 0.8)
+  }
+
+  # ---- Performance (legacy) ----
+  if (!is.null(perf_tbl) && nrow(perf_tbl)) {
+    pages <- split_pages(perf_tbl, rows_per_page = 28)
+    for (i in seq_along(pages)) {
+      new_page(); title_grob("Clustering Agreement — Performance", y = 0.96)
+      if (length(pages) > 1) para_grob(sprintf("Page %d of %d", i, length(pages)), y = 0.91, size = 9)
+      draw_table(pages[[i]], y = 0.55, height = 0.8)
+    }
+  }
+
+  # ---- Agreement (legacy) ----
+  if (!is.null(agr_tbl) && nrow(agr_tbl)) {
+    pages <- split_pages(agr_tbl, rows_per_page = 28)
+    for (i in seq_along(pages)) {
+      new_page(); title_grob("Agreement Details", y = 0.96)
+      if (length(pages) > 1) para_grob(sprintf("Page %d of %d", i, length(pages)), y = 0.91, size = 9)
+      draw_table(pages[[i]], y = 0.55, height = 0.8)
+    }
+  }
+
+  # ---- NEW: Tuning/benchmark pages when res$curves is tidy ----
+  if (is_tuning_like) {
+    curves <- tuning_df
+
+    # normalize expected columns
+    needed <- c("method","silhouette","silhouette_pen","ch","db","modularity",
+                "stability","ari","pairwise_f1","time_sec","peak_mem_MB",
+                "k","k_knn","min_sim","eps","minPts","resolution_parameter","max_dist")
+    for (nm in needed) if (is.null(curves[[nm]])) curves[[nm]] <- NA
+    # score col
+    score_col <- switch(objective,
+      silhouette = "silhouette",
+      silhouette_penalized = "silhouette_pen",
+      ch = "ch",
+      db_min = "db",
+      modularity = "modularity",
+      stability = "stability",
+      ari = "ari",
+      pairwise_f1 = "pairwise_f1",
+      stop("Unknown objective for report: ", objective)
+    )
+    curves$.score <- curves[[score_col]]
+    if (objective == "db_min") curves$.score <- -curves$.score
+
+    # Best per method + Top-N
+    if (has_dplyr) {
+      best_tbl <- curves |>
+        dplyr::group_by(.data$method) |>
+        dplyr::arrange(dplyr::desc(.data$.score)) |>
+        dplyr::slice_head(n = 1) |>
+        dplyr::ungroup()
+
+      top_tbl <- curves |>
+        dplyr::arrange(dplyr::desc(.data$.score)) |>
+        dplyr::slice_head(n = min(top_n, nrow(curves)))
+    } else {
+      # fallbacks without dplyr
+      best_tbl <- do.call(rbind, lapply(split(curves, curves$method), function(df) df[which.max(df$.score), , drop = FALSE]))
+      top_tbl  <- curves[order(-curves$.score), , drop = FALSE]
+      top_tbl  <- utils::head(top_tbl, min(top_n, nrow(top_tbl)))
+    }
+
+    # key x-axis chooser per method (for score plot)
+    select_x <- function(df) {
+      x <- if (!all(is.na(df$k))) "k" else
+        if (!all(is.na(df$k_knn))) "k_knn" else
+        if (!all(is.na(df$resolution_parameter))) "resolution_parameter" else
+        if (!all(is.na(df$eps))) "eps" else
+        if (!all(is.na(df$min_sim))) "min_sim" else
+        if (!all(is.na(df$max_dist))) "max_dist" else NULL
+      x
+    }
+    curves$.xvar <- NA_real_
+    for (m in unique(curves$method)) {
+      idx <- which(curves$method == m)
+      xnm <- select_x(curves[idx, , drop = FALSE])
+      if (!is.null(xnm)) curves$.xvar[idx] <- curves[idx, xnm, drop = TRUE]
+    }
+
+    # Best-per-method table (compact)
+    fmt_num <- function(x) ifelse(is.na(x), "", sprintf(paste0("%.", digits, "f"), x))
+    best_view <- best_tbl |>
+      dplyr::mutate(dplyr::across(c(.data$silhouette, .data$silhouette_pen, .data$ch, .data$db,
+                                    .data$modularity, .data$stability, .data$ari, .data$pairwise_f1,
+                                    .data$time_sec, .data$peak_mem_MB), \(z) as.numeric(z))) |>
+      dplyr::mutate(dplyr::across(c(.data$silhouette, .data$silhouette_pen, .data$ch, .data$db,
+                                    .data$modularity, .data$stability, .data$ari, .data$pairwise_f1,
+                                    .data$time_sec, .data$peak_mem_MB), fmt_num)) |>
+      dplyr::select(.data$method, .data$k, .data$k_knn, .data$min_sim, .data$eps, .data$minPts,
+                    .data$resolution_parameter, .data$max_dist,
+                    .data$silhouette_pen, .data$ch, .data$db, .data$modularity,
+                    .data$time_sec, .data$peak_mem_MB)
+
+    # Top-N overall table
+    top_view <- top_tbl |>
+      dplyr::mutate(dplyr::across(c(.data$.score, .data$silhouette_pen, .data$ch, .data$db,
+                                    .data$modularity, .data$time_sec, .data$peak_mem_MB), \(z) as.numeric(z))) |>
+      dplyr::mutate(dplyr::across(c(.data$.score, .data$silhouette_pen, .data$ch, .data$db,
+                                    .data$modularity, .data$time_sec, .data$peak_mem_MB), fmt_num)) |>
+      dplyr::select(.data$method, .data$k, .data$k_knn, .data$min_sim, .data$eps, .data$minPts,
+                    .data$resolution_parameter, .data$max_dist,
+                    .data$.score, .data$silhouette_pen, .data$ch, .data$db,
+                    .data$modularity, .data$time_sec, .data$peak_mem_MB)
+
+    # Page: Best per method
+    new_page()
+    title_grob(sprintf("%s — Tuning summary (%s)", dataset_name, objective), y = 0.96)
+    draw_table(best_view, y = 0.55, height = 0.8)
+
+    # Page: Top-N overall
+    new_page()
+    title_grob(sprintf("Top %d configurations overall", nrow(top_view)), y = 0.96)
+    draw_table(top_view, y = 0.55, height = 0.8)
+
+    # Page: Score curves by method
+    if (has_gg) {
+      # derive highlighted points (best per method)
+      best_points <- best_tbl
+      # get x for each best row:
+      best_points$.xvar <- NA_real_
+      for (i in seq_len(nrow(best_points))) {
+        m <- best_points$method[i]
+        xnm <- select_x(best_points[i, , drop = FALSE])
+        if (!is.null(xnm)) best_points$.xvar[i] <- best_points[[xnm]][i]
+      }
+      p_scores <- ggplot2::ggplot(curves, ggplot2::aes(x = .data$.xvar, y = .data$.score, group = .data$method)) +
+        ggplot2::geom_point(alpha = 0.7) +
+        ggplot2::geom_line(alpha = 0.5) +
+        ggplot2::geom_point(data = best_points,
+                            ggplot2::aes(x = .data$.xvar, y = .data$.score),
+                            size = 3) +
+        ggplot2::facet_wrap(~ method, scales = "free_x") +
+        ggplot2::labs(title = sprintf("%s — Tuning curves (%s)", dataset_name, objective),
+                      x = "Key parameter (method-specific)", y = "Score") +
+        ggplot2::theme_minimal(base_size = 12)
+      print(p_scores)
+    }
+
+    # Page: Runtime per method
+    if (has_gg) {
+      p_time <- ggplot2::ggplot(curves,
+                 ggplot2::aes(x = stats::reorder(.data$method, .data$time_sec, median, na.rm = TRUE),
+                              y = .data$time_sec)) +
+        ggplot2::geom_boxplot(outlier.shape = NA) +
+        ggplot2::geom_point(position = ggplot2::position_jitter(width = 0.1), alpha = 0.5) +
+        ggplot2::coord_flip() +
+        ggplot2::labs(title = "Runtime per method", x = "", y = "Seconds") +
+        ggplot2::theme_minimal(base_size = 12)
+      print(p_time)
+    }
+
+    # Page: Peak memory per method
+    if (has_gg) {
+      p_mem <- ggplot2::ggplot(curves,
+                ggplot2::aes(x = stats::reorder(.data$method, .data$peak_mem_MB, median, na.rm = TRUE),
+                             y = .data$peak_mem_MB)) +
+        ggplot2::geom_boxplot(outlier.shape = NA) +
+        ggplot2::geom_point(position = ggplot2::position_jitter(width = 0.1), alpha = 0.5) +
+        ggplot2::coord_flip() +
+        ggplot2::labs(title = "Peak memory per method", x = "", y = "MiB") +
+        ggplot2::theme_minimal(base_size = 12)
+      print(p_mem)
+    }
+  }
+
+  # ---- Legacy curve pages (if any) ----
+  if (length(legacy_curve_grobs)) {
+    for (nm in names(legacy_curve_grobs)) {
+      new_page(); title_grob("Method Curves", y = 0.96)
+      grid::pushViewport(grid::viewport(x = 0.5, y = 0.47, width = 0.94, height = 0.82))
+      on.exit(grid::popViewport(), add = TRUE)
+      grid::grid.draw(legacy_curve_grobs[[nm]])
+    }
+  }
+
+  # ---- Top items (legacy) ----
+  if (!is.null(res$top_items) && is.data.frame(res$top_items) && nrow(res$top_items) > 0) {
+    new_page()
+    title_grob(sprintf("Top %d items", min(top_n, nrow(res$top_items))), y = 0.96)
+    draw_table(utils::head(round_num(res$top_items, digits), top_n), y = 0.55, height = 0.8)
+  }
+
+  invisible(file)
+}
+
+
+
+#' Generate a timestamped filename
+#'
+#' Creates a filename with the current date-time as `YYYYMMDDHHMMSS`.
+#' Optionally appends three random digits to reduce collision.
+#'
+#' @param prefix Character. Prefix for the file name (default: "cora_report").
+#' @param ext Character. File extension (default: "pdf").
+#' @param random Logical. Whether to append three random digits (default: FALSE).
+#'
+#' @return A character string with the generated filename.
+#' @examples
+#' make_timestamp_filename()
+#' make_timestamp_filename("results", "csv")
+#' make_timestamp_filename("report", "pdf", random = TRUE)
+#'
+#' @export
+make_timestamp_filename <- function(prefix = "cora_report", ext = "pdf", random = FALSE) {
+  ts <- format(Sys.time(), "%Y%m%d%H%M%S")
+  if (random) {
+    r3 <- sprintf("%03d", sample(0:999, 1))
+    fname <- paste0(prefix, "_", ts, "_", r3, ".", ext)
+  } else {
+    fname <- paste0(prefix, "_", ts, ".", ext)
+  }
+  return(fname)
+}
+
+#' Write performance/agreement table to CSV/TXT (rounded)
+#'
+#' Saves a performance (or clustering agreement) data frame to `.csv` or `.txt`
+#' with numeric columns rounded to a fixed number of decimal places.
+#'
+#' @param x A data.frame/tibble with performance or agreement metrics.
+#' @param file Character path ending in .csv or .txt.
+#' @param digits Integer number of decimal places to round numeric columns (default 5).
+#' @param ... Passed to \code{utils::write.csv} or \code{utils::write.table}.
+#'
+#' @return (Invisibly) the rounded data.frame.
+#' @examples
+#' \dontrun{
+#'   perf <- res$performance %||% res$agreement
+#'   er_write_performance(perf, "results/perf_agreement.txt")
+#'   er_write_performance(perf, "results/perf_agreement.csv", digits = 4)
+#' }
+#' @importFrom tools file_ext
+#' @export
+er_write_performance <- function(x, file, digits = 5, ...) {
+  stopifnot(is.data.frame(x), is.character(file), length(file) == 1)
+  round_num <- function(df, d) {
+    num_cols <- vapply(df, is.numeric, TRUE)
+    if (any(num_cols)) df[num_cols] <- lapply(df[num_cols], round, d)
+    df
+  }
+  x_round <- round_num(x, digits)
+
+  ext <- tolower(tools::file_ext(file))
+  if (ext == "csv") {
+    utils::write.csv(x_round, file = file, row.names = FALSE, ...)
+  } else if (ext == "txt") {
+    utils::write.table(x_round, file = file, sep = "\t", row.names = FALSE, quote = FALSE, ...)
+  } else {
+    stop("Unsupported file extension: ", ext, " (use .csv or .txt)")
+  }
+  invisible(x_round)
+}
+
+
+########################################
+# File: D:/erbot/R/12-pipeline.R
+########################################
+
+#' Unified ER pipeline (full)
+#' @inheritParams er_select_fields
+#' @param truth optional truth (see [er_truth_from_any])
+#' @param embed_col name of embedding column if present
+#' @param k_clusters default k for centroidal methods
+#' @param knn_k k for kNN graphs
+#' @param gc_thresholds thresholds to sweep for GC
+#' @param auto_tune logical: tune k by silhouette (or CA when truth)
+#' @return list with performance, predictions, tuning, details
+#' @export
+er_unified_pipeline <- function(
+    data, truth=NULL, sheet=NULL, id_col=NULL, fields=NULL, extra_fields=NULL,
+    id_candidates=c("id","affiliation_id","record_id","rec_id","docid","rowid","paper_id"),
+    text_candidates=c("title","name","raw_title","string","text","affiliation","aggregate value","clean ag.value"),
+    embed_col=NULL, embed_candidates=c("embedded clean ag.value","embedded ag.value","emb","embedding","vector","embedding_clean"),
+    k_clusters=10, knn_k=15,
+    mst_cut_ratio=5, mst_k=NULL, sn_window=40, sn_method="jw", sn_thresh=0.12,
+    svd_dim=100, louvain_min_sim=0.0, cos_thresh=0.88,
+    gc_thresholds=seq(0.06,0.20,0.02), gc_method=c("lf","sl","rlf"), gc_dist_method="jw",
+    auto_tune=TRUE, tune_metric="adj_rand", k_grid=c(5,10,15,20),
+    eval_mode=c("labeled_only","singleton_fill"), write_csv=NULL,
+    run_comm_methods=c("walktrap","infomap","fast_greedy","label_prop"),
+    show_progress=TRUE
+){
+  eval_mode <- match.arg(eval_mode); gc_method <- match.arg(gc_method)
+  flags <- c(load=1, select=1, tfidf=1, embed=1, kmeans=1, mstsn=1, louvain=1, embknn=1, hc=1, pam=1,
+             gc = as.integer(!is.null(gc_thresholds) && length(gc_thresholds) > 0),
+             comm = as.integer(length(run_comm_methods) > 0), eval=1, write=1)
+  p <- if (isTRUE(show_progress)) er_progress_start(sum(flags), "ER unified pipeline") else NULL
+
+  df_raw  <- er_load_input(data, sheet = sheet);                                       er_progress_tick(p, "Loaded input")
+  df_text <- er_select_fields(df_raw, id_col=id_col, fields=fields, extra_fields=extra_fields,
+                              id_candidates=id_candidates, text_candidates=text_candidates,
+                              normalize=TRUE, auto_fields=TRUE);                       er_progress_tick(p, "Selected fields")
+
+  Xsvd <- er_features_tfidf_svd(df_text$text_for_matching, svd_dim=svd_dim);          er_progress_tick(p, "Built TF-IDF + SVD")
+  ec <- if (is.null(embed_col)) intersect(tolower(embed_candidates), names(df_raw))[1] else tolower(embed_col)
+  E <- if (!is.na(ec) && !is.null(ec) && ec %in% names(df_raw)) er_safe_parse_embedding_col(df_raw[[ec]]) else NULL
+  er_progress_tick(p, sprintf("Parsed embeddings: %s", ifelse(is.null(E), "no", "yes")))
+
+  # KMeans (tuned)
+  pick_k <- k_clusters
+  if (auto_tune) {
+    if (!is.null(truth)) {
+      tt <- er_truth_from_any(truth); gold_map <- setNames(tt$cluster_id, tt$id)
+      idx <- which(df_text$id %in% names(gold_map)); gold <- gold_map[df_text$id[idx]]
+      km_rows <- lapply(k_grid, function(k){ labs <- er_kmeans_from_X(Xsvd[idx,,drop=FALSE], k=k); met <- er_eval_ca_one(labs, gold); dplyr::bind_cols(tibble::tibble(k=k), met) })
+      km_tune <- dplyr::bind_rows(km_rows); pick_k <- km_tune$k[order(km_tune[[tune_metric]], decreasing=TRUE)][1]
+    } else {
+      Dcos <- er_cosine_dist(Xsvd)
+      km_rows <- lapply(k_grid, function(k){ labs <- er_kmeans_from_X(Xsvd, k=k); tibble::tibble(k=k, silhouette=er_silhouette_avg(labs, Dcos)) })
+      km_sil_curve <- dplyr::bind_rows(km_rows); pick_k <- km_sil_curve$k[which.max(km_sil_curve$silhouette %||% NA_real_)]; if (!length(pick_k)) pick_k <- k_clusters
+    }
+  }
+  pred_kmeans <- er_kmeans_from_X(Xsvd, k=pick_k);                                     er_progress_tick(p, sprintf("KMeans (k=%d)", pick_k))
+
+  # MST/SN+edit
+  pred_mst_sn <- er_mst_or_sn_edit(df_text$text_for_matching, mst_cut_ratio=mst_cut_ratio, mst_k=mst_k,
+                                   sn_window=sn_window, sn_method=sn_method, sn_thresh=sn_thresh)
+  er_progress_tick(p, "MST/SN+edit")
+
+  # Louvain kNN
+  lv <- er_louvain_knn(Xsvd, knn=knn_k, min_sim=louvain_min_sim)
+  pred_louvain <- lv$labels; g_knn <- lv$graph;                                        er_progress_tick(p, sprintf("Louvain kNN (k=%d)", knn_k))
+
+  # Embed kNN
+  pred_embed <- if (!is.null(E)) er_embed_knn(E, k=knn_k, cos_thresh=cos_thresh) else NULL
+  er_progress_tick(p, sprintf("Embed-kNN: %s", ifelse(is.null(pred_embed), "skipped", "done")))
+
+  # HC (tuned)
+  pick_k_hc <- k_clusters
+  if (auto_tune) {
+    if (!is.null(truth)) {
+      tt <- er_truth_from_any(truth); gold_map <- setNames(tt$cluster_id, tt$id)
+      idx <- which(df_text$id %in% names(gold_map)); gold <- gold_map[df_text$id[idx]]
+      rows <- lapply(k_grid, function(k){ labs <- er_hclust_from_X(Xsvd[idx,,drop=FALSE], k=k); met <- er_eval_ca_one(labs, gold); dplyr::bind_cols(tibble::tibble(k=k), met) })
+      hc_tune <- dplyr::bind_rows(rows); pick_k_hc <- hc_tune$k[order(hc_tune[[tune_metric]], decreasing=TRUE)][1]
+    } else {
+      Dcos <- er_cosine_dist(Xsvd)
+      rows <- lapply(k_grid, function(k){ labs <- er_hclust_from_X(Xsvd, k=k); tibble::tibble(k=k, silhouette=er_silhouette_avg(labs, Dcos)) })
+      hclust_sil_curve <- dplyr::bind_rows(rows); pick_k_hc <- hclust_sil_curve$k[which.max(hclust_sil_curve$silhouette %||% NA_real_)]; if (!length(pick_k_hc)) pick_k_hc <- k_clusters
+    }
+  }
+  pred_hclust <- er_hclust_from_X(Xsvd, k=pick_k_hc);                                   er_progress_tick(p, sprintf("HC (k=%d)", pick_k_hc))
+
+  # PAM (tuned)
+  pick_k_pam <- k_clusters
+  if (auto_tune) {
+    if (!is.null(truth)) {
+      tt <- er_truth_from_any(truth); gold_map <- setNames(tt$cluster_id, tt$id)
+      idx <- which(df_text$id %in% names(gold_map)); gold <- gold_map[df_text$id[idx]]
+      rows <- lapply(k_grid, function(k){ labs <- er_pam_from_X(Xsvd[idx,,drop=FALSE], k=k); met <- er_eval_ca_one(labs, gold); dplyr::bind_cols(tibble::tibble(k=k), met) })
+      pam_tune <- dplyr::bind_rows(rows); pick_k_pam <- pam_tune$k[order(pam_tune[[tune_metric]], decreasing=TRUE)][1]
+    } else {
+      Dcos <- er_cosine_dist(Xsvd)
+      rows <- lapply(k_grid, function(k){ labs <- er_pam_from_X(Xsvd, k=k); tibble::tibble(k=k, silhouette=er_silhouette_avg(labs, Dcos)) })
+      pam_sil_curve <- dplyr::bind_rows(rows); pick_k_pam <- pam_sil_curve$k[which.max(pam_sil_curve$silhouette %||% NA_real_)]; if (!length(pick_k_pam)) pick_k_pam <- k_clusters
+    }
+  }
+  pred_pam <- er_pam_from_X(Xsvd, k=pick_k_pam);                                        er_progress_tick(p, sprintf("PAM (k=%d)", pick_k_pam))
+
+  # Graph Coloring (threshold sweep)
+  pred_gc <- NULL; gc_best_thr <- NA; gc_tune_tbl <- NULL
+  if (!is.null(gc_thresholds) && length(gc_thresholds) && nrow(df_text) >= 2) {
+    truth_vec <- if (!is.null(truth)) { tt <- er_truth_from_any(truth); setNames(tt$cluster_id, tt$id)[df_text$id] } else NULL
+    gc_res <- er_gc_from_text(df_text$text_for_matching, thresholds=gc_thresholds, gc_method=gc_method,
+                              dist_method=gc_dist_method, tune_metric=tune_metric, truth=truth_vec,
+                              progress=p, dist_block=4000)
+    pred_gc <- gc_res$labels; gc_best_thr <- gc_res$best_threshold; gc_tune_tbl <- gc_res$tuning
+  }
+  er_progress_tick(p, "Graph Coloring")
+
+  # Extra communities
+  extra_preds <- list()
+  if (length(run_comm_methods) && !is.null(lv$graph)) {
+    for (m in run_comm_methods) {
+      labs <- tryCatch({
+        if (igraph::ecount(lv$graph) == 0) rep(1L, nrow(df_text)) else switch(m,
+                                                                              "walktrap"    = igraph::membership(igraph::cluster_walktrap(lv$graph)),
+                                                                              "infomap"     = igraph::membership(igraph::cluster_infomap(lv$graph)),
+                                                                              "fast_greedy" = igraph::membership(igraph::cluster_fast_greedy(lv$graph)),
+                                                                              "label_prop"  = igraph::membership(igraph::cluster_label_prop(lv$graph)),
+                                                                              rep(1L, nrow(df_text)))
+      }, error=function(e) rep(1L, nrow(df_text)))
+      extra_preds[[paste0("pred_comm_", m)]] <- as.integer(labs)
+    }
+  }
+  er_progress_tick(p, "Extra communities")
+
+  out <- tibble::tibble(
+    id = df_text$id,
+    text_for_matching = df_text$text_for_matching,
+    pred_kmeans   = as.integer(pred_kmeans),
+    pred_mst_or_sn = as.integer(pred_mst_sn),
+    pred_louvain  = as.integer(pred_louvain),
+    pred_hclust   = as.integer(pred_hclust),
+    pred_pam      = as.integer(pred_pam)
+  )
+  if (!is.null(pred_embed)) out$pred_embedKNN <- as.integer(pred_embed)
+  if (!is.null(pred_gc))    out$pred_gc      <- as.integer(pred_gc)
+  if (length(extra_preds))  out <- dplyr::bind_cols(out, tibble::as_tibble(extra_preds))
+
+  perf_tbl <- NULL
+  if (!is.null(truth)) {
+    truth_clusters <- er_truth_from_any(truth)
+    if (nrow(truth_clusters)) {
+      out <- dplyr::left_join(out, truth_clusters, by="id")
+      idx <- if (eval_mode == "singleton_fill") {
+        if (any(is.na(out$cluster_id))) {
+          start <- suppressWarnings(max(as.integer(out$cluster_id), na.rm=TRUE)); start <- ifelse(is.finite(start), start, 0L)
+          miss <- which(is.na(out$cluster_id)); out$cluster_id[miss] <- start + seq_along(miss)
+        }
+        seq_len(nrow(out))
+      } else which(!is.na(out$cluster_id))
+      if (length(idx) >= 2) {
+        gold <- out$cluster_id[idx]; meth_cols <- grep("^pred_", names(out), value=TRUE)
+        perf_tbl <- dplyr::bind_rows(lapply(meth_cols, function(mc){
+          met <- er_eval_ca_one(out[[mc]][idx], gold)
+          dplyr::bind_cols(tibble::tibble(Method = sub("^pred_","",mc)), met)
+        }))
+        perf_tbl$Method <- dplyr::recode(perf_tbl$Method,
+                                         "mst_or_sn"="MST_or_SN_Edit","embedKNN"="Embed_kNN",
+                                         "comm_walktrap"="Comm_Walktrap","comm_infomap"="Comm_Infomap",
+                                         "comm_fast_greedy"="Comm_FastGreedy","comm_label_prop"="Comm_LabelProp")
+      }
+    }
+  }
+  er_progress_tick(p, "Evaluation")
+
+  if (!is.null(write_csv)) readr::write_csv(out, write_csv)
+  er_progress_tick(p, ifelse(is.null(write_csv), "No CSV written", paste("Wrote CSV:", write_csv)))
+  er_progress_done(p)
+
+  list(
+    performance = perf_tbl,
+    predictions = out,
+    tuning = list(
+      kmeans_k = pick_k, hclust_k = pick_k_hc, pam_k = pick_k_pam,
+      gc_best_threshold = gc_best_thr, gc_threshold_curve = gc_tune_tbl,
+      kmeans_sil_curve = if (exists("km_sil_curve")) km_sil_curve else NULL,
+      hclust_sil_curve = if (exists("hclust_sil_curve")) hclust_sil_curve else NULL,
+      pam_sil_curve    = if (exists("pam_sil_curve")) pam_sil_curve else NULL
+    ),
+    details = list(
+      n = nrow(df_text), has_embeddings = !is.null(E),
+      params = list(
+        k_clusters=k_clusters, knn_k=knn_k,
+        mst_cut_ratio=mst_cut_ratio, mst_k=mst_k,
+        sn_window=sn_window, sn_method=sn_method, sn_thresh=sn_thresh,
+        svd_dim=svd_dim, louvain_min_sim=louvain_min_sim, cos_thresh=cos_thresh,
+        gc_thresholds=gc_thresholds, gc_method=gc_method, gc_dist_method=gc_dist_method,
+        auto_tune=auto_tune, tune_metric=tune_metric, k_grid=k_grid
+      )
+    )
+  )
+}
+
+
+########################################
+# File: D:/erbot/R/13-main.R
+########################################
+
+#' High-level facade (full pipeline + plotting/tables)
+#' @export
+er_main <- function(
+    data, truth=NULL, fields=NULL, extra_fields=NULL, id_col=NULL, embed_col=NULL,
+    k_clusters=10, knn_k=15, mst_cut_ratio=5, mst_k=NULL, sn_window=40, sn_method="jw", sn_thresh=0.12,
+    svd_dim=100, louvain_min_sim=0.0, cos_thresh=0.88,
+    gc_thresholds=seq(0.06,0.20,0.02), gc_method="rlf", gc_dist_method="jw",
+    auto_tune=TRUE, tune_metric="adj_rand", k_grid=c(5,10,15,20),
+    eval_mode="labeled_only", write_csv=NULL, sheet=NULL,
+    run_comm_methods=c("walktrap","infomap","fast_greedy","label_prop"),
+    auto_plot=TRUE, show_tables=TRUE, show_progress=TRUE
+){
+  res <- er_unified_pipeline(
+    data=data, truth=truth, sheet=sheet, id_col=id_col, fields=fields, extra_fields=extra_fields,
+    embed_col=embed_col, k_clusters=k_clusters, knn_k=knn_k,
+    mst_cut_ratio=mst_cut_ratio, mst_k=mst_k, sn_window=sn_window, sn_method=sn_method, sn_thresh=sn_thresh,
+    svd_dim=svd_dim, louvain_min_sim=louvain_min_sim, cos_thresh=cos_thresh,
+    gc_thresholds=gc_thresholds, gc_method=gc_method, gc_dist_method=gc_dist_method,
+    auto_tune=auto_tune, tune_metric=tune_metric, k_grid=k_grid,
+    eval_mode=eval_mode, write_csv=write_csv, run_comm_methods=run_comm_methods,
+    show_progress=show_progress
+  )
+  if (isTRUE(show_tables)) {
+    cat("\n===== Selected Parameters =====\n")
+    print(list(
+      kmeans_k = res$tuning$kmeans_k,
+      hclust_k = res$tuning$hclust_k,
+      pam_k    = res$tuning$pam_k,
+      gc_best_threshold = res$tuning$gc_best_threshold
+    ))
+  }
+  if (isTRUE(auto_plot))   er_autoplot_tuning(res)
+  if (isTRUE(show_tables)) {
+    cat("\n===== Tuning tables (top 5) =====\n")
+    if (!is.null(res$tuning$gc_threshold_curve)) {
+      gc_curve <- res$tuning$gc_threshold_curve
+      metric <- er_pick_gc_metric(gc_curve, fallback_metric = (res$details$params$tune_metric %||% "adj_rand"))
+      ord <- order(gc_curve[[metric]], decreasing=TRUE)
+      print(utils::head(gc_curve[ord, c("threshold", metric), drop=FALSE], 5))
+    }
+    if (!is.null(res$performance)) print(res$performance)
+  }
+  invisible(res)
+}
+
+#' Minimal facade (quick comparisons)
+#' @export
+er_main_simple <- function(data,
+                           truth = NULL,
+                           fields = c("title","authors","address"),
+                           k_grid = seq(10, 300, by = 10),
+                           write_csv = NULL,
+                           svd_k = 100,
+                           knn_k = 15,
+                           louvain_min_sim = 0.0,
+                           use_methods = c("kmeans_tfidf_svd","louvain_knn","louvain_multifield")) {
+
+  use_methods <- match.arg(use_methods,
+                           c("kmeans_tfidf_svd","louvain_knn","louvain_multifield"),
+                           several.ok = TRUE)
+
+  df <- if (is.character(data) && file.exists(data)) {
+    read.csv(data, stringsAsFactors = FALSE)
+  } else if (is.data.frame(data)) {
+    data
+  } else {
+    stop("Unsupported 'data' input. Provide a data.frame or a readable file path.")
+  }
+  n <- nrow(df)
+
+  df_text <- er_select_fields(df, id_col = NULL, fields = fields, extra_fields = NULL,
+                              normalize = TRUE, auto_fields = is.null(fields))
+  Xsvd <- er_features_tfidf_svd(df_text$text_for_matching, svd_dim = svd_k)
+
+  km_best <- NULL
+  .er_kmeans_sweep <- function(X_dense, k_grid, seed=123, nstart=10) {
+    k_grid <- sort(unique(k_grid[k_grid >= 2 & k_grid < nrow(X_dense)]))
+    if (length(k_grid) == 0) stop("k_grid has no valid k.")
+    rn <- sqrt(rowSums(X_dense^2)); rn[rn == 0] <- 1
+    Z <- X_dense / rn
+    best <- list(k = NULL, cl = NULL, score = -Inf)
+    for (k in k_grid) {
+      set.seed(seed); cl <- kmeans(Z, centers = k, nstart = nstart)$cluster
+      centers <- rowsum(Z, cl) / as.vector(table(cl))
+      cnorm <- sqrt(rowSums(centers^2)); cnorm[cnorm == 0] <- 1
+      centers <- centers / cnorm
+      cos_self <- rowSums(Z * centers[cl, , drop = FALSE])
+      cos_to_all <- Z %*% t(centers)
+      cos_next <- vapply(seq_len(nrow(Z)), function(i) max(cos_to_all[i, setdiff(seq_len(k), cl[i])]), numeric(1))
+      s <- (cos_self - cos_next) / pmax(cos_self, cos_next, 1e-8)
+      s_mean <- mean(s, na.rm = TRUE)
+      if (is.finite(s_mean) && s_mean > best$score) best <- list(k = k, cl = cl, score = s_mean)
+    }
+    best
+  }
+  if ("kmeans_tfidf_svd" %in% use_methods) km_best <- .er_kmeans_sweep(Xsvd, k_grid)
+
+  lv_knn <- NULL
+  if ("louvain_knn" %in% use_methods) {
+    lv_res <- er_louvain_knn(Xsvd, knn = knn_k, min_sim = louvain_min_sim)
+    lv_knn <- as.integer(lv_res$labels)
+  }
+
+  lv_multi <- NULL
+  if ("louvain_multifield" %in% use_methods) {
+    spec <- list()
+    if ("title" %in% fields && "title" %in% names(df))   spec <- append(spec, list(list(name="title",   type="jw", w=1)))
+    if ("authors" %in% fields && "authors" %in% names(df)) spec <- append(spec, list(list(name="authors", type="jw", w=1)))
+    if ("address" %in% fields && "address" %in% names(df)) spec <- append(spec, list(list(name="address", type="jw", w=1)))
+    if ("year" %in% names(df)) spec <- append(spec, list(list(name="year", type="year", w=1, tau=0.5)))
+    blk <- if ("title" %in% names(df)) { tolower(substr(df$title %||% "", 1, 1)) } else { rep("ALL", n) }
+    S <- er_similarity_multifield(df, spec = spec, block_key = blk, top_k = knn_k)
+    lv_multi <- er_louvain_from_S(S, min_sim = louvain_min_sim)
+  }
+
+  .eval_ext <- function(pred, truth) {
+    out <- list(ARI = NA_real_, Precision = NA_real_, Recall = NA_real_, F1 = NA_real_)
+    if (is.null(truth) || !is.vector(truth) || length(truth) != length(pred)) return(out)
+    if (requireNamespace("aricode", quietly = TRUE))
+      out$ARI <- tryCatch(aricode::ARI(pred, truth), error=function(e) NA_real_)
+    pair_count <- function(labels) { sum(choose(as.numeric(table(labels)), 2)) }
+    cont <- table(pred, truth)
+    TP <- sum(choose(as.numeric(cont), 2))
+    Pp <- pair_count(pred); Pt <- pair_count(truth)
+    prec <- if (Pp == 0) 0 else TP / Pp
+    rec  <- if (Pt == 0) 0 else TP / Pt
+    out$Precision <- prec; out$Recall <- rec; out$F1 <- if ((prec+rec)==0) 0 else 2*prec*rec/(prec+rec)
+    out
+  }
+
+  cand <- list()
+  if (!is.null(km_best))    cand$kmeans_tfidf_svd <- list(name="kmeans_tfidf_svd", cl=km_best$cl, k=km_best$k, score_ext = .eval_ext(km_best$cl, truth), score_int = km_best$score)
+  if (!is.null(lv_knn))     cand$louvain_knn      <- list(name="louvain_knn",      cl=lv_knn,       k=NA_integer_,     score_ext = .eval_ext(lv_knn, truth),       score_int = NA_real_)
+  if (!is.null(lv_multi))   cand$louvain_multifield <- list(name="louvain_multifield", cl=lv_multi, k=NA_integer_,    score_ext = .eval_ext(lv_multi, truth),     score_int = NA_real_)
+  if (!length(cand)) stop("No methods ran. Check inputs or 'use_methods'.")
+
+  pick <- NULL
+  if (!is.null(truth)) {
+    scores <- sapply(cand, function(x) c(ARI = x$score_ext$ARI %||% -Inf, F1  = x$score_ext$F1  %||% -Inf))
+    ord <- order(scores["ARI",], scores["F1",], decreasing = TRUE, na.last = TRUE)
+    pick <- cand[[ord[1]]]
+  } else {
+    pick <- cand[[1L]]
+  }
+
+  pred <- pick$cl
+  outdf <- data.frame(row_id = seq_len(n), cluster = as.integer(pred))
+  if (!is.null(write_csv)) {
+    idcol <- intersect(c("id","ID","Id","record_id"), names(df))
+    if (length(idcol)) outdf[[idcol[1]]] <- df[[idcol[1]]]
+    keep <- intersect(fields, names(df))
+    outdf <- cbind(outdf, df[keep])
+    utils::write.csv(outdf, write_csv, row.names = FALSE)
+  }
+
+  list(
+    clusters = as.integer(pred),
+    chosen = pick$name,
+    k = pick$k,
+    external = pick$score_ext,
+    internal = pick$score_int,
+    summary = list(n = n, fields = fields, used_methods = names(cand))
+  )
+}
+
+
+########################################
+# File: D:/erbot/R/14-weighted-pipeline.R
+########################################
+
+#' Normalize named field weights
+#' @export
+normalize_weights <- function(weights, field_names) {
+  w <- unlist(weights)
+  if (is.null(names(w))) {
+    if (length(w) != length(field_names)) stop("weights length must match fields")
+    names(w) <- field_names
+  } else {
+    w <- w[field_names]; w[is.na(w)] <- 0
+  }
+  if (any(w < 0)) stop("weights must be non-negative")
+  s <- sum(w); if (s <= 0) stop("sum(weights) must be > 0")
+  w / s
+}
+
+#' Expand fields proportionally to weights (fallback)
+#' @export
+expand_fields_by_weights <- function(fields, weights, base_rep = 10L) {
+  w <- normalize_weights(weights, fields)
+  reps <- pmax(1L, round(w * base_rep))
+  expanded <- unlist(mapply(function(f, r) rep(f, r), fields, reps, SIMPLIFY = FALSE), use.names = FALSE)
+  attr(expanded, "weights") <- w
+  attr(expanded, "reps") <- reps
+  expanded
+}
+
+#' Run er_main using weights (native or fallback)
+#' @export
+run_with_weights <- function(data, truth, fields, weights, id_col = "id",
+                             k_grid = seq(10, 300, by = 10), base_rep = 12L,
+                             write_csv = NULL, er_method = c("kmeans","gc","louvain"),
+                             save_pdf = NULL, pdf_title = "ER Report") {
+  er_method <- match.arg(er_method)
+  w_norm <- normalize_weights(weights, fields)
+
+  res <- NULL; used_native <- FALSE
+  try({
+    res <- er_main(
+      data = data, truth = truth, fields = fields,
+      field_weights = w_norm, k_grid = k_grid, write_csv = write_csv
+    )
+    used_native <- TRUE
+  }, silent = TRUE)
+
+  if (is.null(res)) {
+    expanded_fields <- expand_fields_by_weights(fields, w_norm, base_rep = base_rep)
+    res <- er_main(
+      data = data, truth = truth, fields = expanded_fields,
+      k_grid = k_grid, write_csv = write_csv
+    )
+  } else {
+    attr(res, "weights_used") <- w_norm
+  }
+  if (!is.null(save_pdf)) try(er_save_report_pdf(res, save_pdf, pdf_title), silent = TRUE)
+
+  extract_adj_rand <- function(res) {
+    tryCatch({
+      if (!is.null(res$performance)) {
+        row <- res$performance
+        m <- row$adj_rand
+        if (length(m)) as.numeric(m[which.max(m)]) else NA_real_
+      } else NA_real_
+    }, error=function(e) NA_real_)
+  }
+
+  list(result = res, weights = w_norm, method = er_method, adj_rand = extract_adj_rand(res), native_weights = used_native)
+}
+
+#' Learn best field weights via CV and run final
+#' @export
+er_general_pipeline <- function(data, truth, id_col = "id",
+                                fields = setdiff(names(data), id_col),
+                                weights = NULL, learn_weights = FALSE,
+                                folds = 3, budget = 20, dirichlet_alpha = NULL,
+                                base_rep = 12L, er_method = c("kmeans","gc","louvain"),
+                                k_grid = seq(10, 300, by = 10),
+                                write_csv = NULL, save_pdf = NULL, pdf_title = "ER Report",
+                                max_records_per_fold = NULL,
+                                seed = 42, verbose = TRUE) {
+  er_method <- match.arg(er_method); set.seed(seed)
+
+  if (isTRUE(learn_weights) || is.null(weights)) {
+    if (verbose) cat("[er_general_pipeline] Learning weights via CV...\n")
+    if (is.null(dirichlet_alpha)) dirichlet_alpha <- rep(1, length(fields))
+    names(dirichlet_alpha) <- fields
+    rdirichlet_simple <- function(n, alpha) {
+      k <- length(alpha)
+      out <- matrix(NA_real_, nrow = n, ncol = k)
+      for (i in seq_len(n)) { g <- stats::rgamma(k, shape = alpha, rate = 1); out[i, ] <- g / sum(g) }
+      colnames(out) <- names(alpha); out
+    }
+    ws <- rdirichlet_simple(budget, dirichlet_alpha)
+    candidates <- lapply(seq_len(nrow(ws)), function(i) { w <- ws[i,]; names(w) <- colnames(ws); w })
+
+    all_ids <- if (id_col %in% names(data)) as.character(data[[id_col]]) else as.character(seq_len(nrow(data)))
+    fold_ids <- split(all_ids, sort.int(seq_along(all_ids) %% folds))
+    eval_table <- dplyr::tibble()
+
+    for (ci in seq_along(candidates)) {
+      w <- normalize_weights(candidates[[ci]], fields)
+      ari_folds <- c()
+      for (fi in seq_along(fold_ids)) {
+        ids_fold <- fold_ids[[fi]]
+        if (!is.null(max_records_per_fold) && length(ids_fold) > max_records_per_fold) {
+          ids_fold <- sample(ids_fold, max_records_per_fold)
+        }
+        subset_data <- function(dat, keep_ids) if (id_col %in% names(dat)) dat[dat[[id_col]] %in% keep_ids, , drop = FALSE] else dat[as.integer(keep_ids), , drop = FALSE]
+        dat_fold <- subset_data(data, ids_fold)
+        tru <- truth
+        res <- try(run_with_weights(dat_fold, tru, fields, w, id_col = id_col,
+                                    k_grid = k_grid, base_rep = base_rep, write_csv = NULL,
+                                    er_method = er_method, save_pdf = NULL), silent = TRUE)
+        ari <- if (inherits(res, "try-error")) NA_real_ else res$adj_rand
+        ari_folds <- c(ari_folds, ari)
+        if (verbose) cat(sprintf("Candidate %d fold %d: ARI=%.4f\n", ci, fi, ifelse(is.na(ari), NaN, ari)))
+      }
+      eval_table <- dplyr::bind_rows(eval_table,
+                                     dplyr::tibble(candidate = ci, mean_ari = mean(ari_folds, na.rm = TRUE),
+                                                   weights = list(w), ari_folds = list(ari_folds)))
+    }
+    best_row <- eval_table %>% dplyr::arrange(dplyr::desc(mean_ari)) %>% dplyr::slice(1)
+    weights <- best_row$weights[[1]]
+    if (verbose) cat(sprintf("[er_general_pipeline] Best weights: %s\n", paste(sprintf("%s=%.3f", names(weights), weights), collapse=", ")))
+  } else {
+    weights <- normalize_weights(weights, fields)
+  }
+
+  if (verbose) cat("[er_general_pipeline] Final run with selected weights...\n")
+  final <- run_with_weights(
+    data = data, truth = truth, fields = fields, weights = weights, id_col = id_col,
+    k_grid = k_grid, base_rep = base_rep, write_csv = write_csv,
+    er_method = er_method, save_pdf = save_pdf, pdf_title = pdf_title
+  )
+  list(final = final, fields = fields, weights = weights)
+}
+
+
+########################################
+# File: D:/erbot/R/15-run-with-dataset.R
+########################################
+
+#' Run CORA entity resolution demo
+#'
+#' Executes the ER pipeline on the CORA dataset with user-specified fields.
+#' Produces a cleaned prediction CSV and a PDF report. Optionally writes a
+#' rounded “Clustering Agreement — Performance” table to `.csv` or `.txt`.
+#'
+#' @param fields_cora Character vector. The field names from the CORA dataset
+#'   to use for entity resolution (e.g., `c("title", "authors", "address")`).
+#' @param out_dir Character. Path to the output directory where results will
+#'   be written. Subdirectories `"data"` and `"results"` will be created if needed.
+#' @param file_suffix Character or numeric. Suffix appended to output filenames
+#'   (default: current Unix timestamp via `as.numeric(Sys.time())`).
+#' @param save_perf_file Optional character path to save the performance/agreement
+#'   table (must end with `.csv` or `.txt`). Numeric columns are rounded to 5 d.p.
+#' @param perf_source Character scalar; which table to save if available:
+#'   one of `c("performance","agreement","auto")`. With `"auto"`, the function
+#'   prefers `res$performance`, then falls back to `res$agreement`. Default: `"auto"`.
+#' @param digits Integer; number of decimals for metrics displayed in the PDF header/tables (default 5).
+#'
+#' @details
+#' The function will:
+#' \itemize{
+#'   \item Load CORA data and gold labels.
+#'   \item Run \code{er_main()} with \code{k_grid = 10:500 by 10}.
+#'   \item Save predictions to \code{data/cora_clean_pred_<suffix>.csv}.
+#'   \item Render a PDF report to \code{results/cora_report_<suffix>.pdf} and include
+#'         total runtime in seconds.
+#'   \item Optionally write a rounded performance/agreement table to \code{save_perf_file}.
+#' }
+#'
+#' @return Invisibly returns the result object from \code{er_main()}.
+#'
+#' @examples
+#' \dontrun{
+#'   run_cora(
+#'     fields_cora   = c("title","authors","address"),
+#'     out_dir       = "~/Desktop/erbot_outputs",
+#'     save_perf_file= "~/Desktop/erbot_outputs/results/perf_agreement.csv"
+#'   )
+#' }
+#'
+#' @seealso \code{\link{er_write_performance}}, \code{\link{make_timestamp_filename}}
+#' @export
+run_cora <- function(fields_cora,
+                     out_dir,
+                     file_suffix   = as.numeric(Sys.time()),
+                     save_perf_file = NULL,
+                     perf_source    = c("auto","performance","agreement"),
+                     digits         = 5) {
+  perf_source <- match.arg(perf_source)
+
+  message("Running CORA demo...")
+
+  # Ensure output folders exist
+  dir.create(file.path(out_dir, "data"),    recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(out_dir, "results"), recursive = TRUE, showWarnings = FALSE)
+
+  # Load CORA
+  if (!requireNamespace("cora", quietly = TRUE)) {
+    install.packages("cora", repos = "https://cloud.r-project.org")
+  }
+  suppressPackageStartupMessages(library(cora))
+
+  # Run pipeline with timing
+  t0 <- Sys.time()
+  res <- er_main(
+    data      = "cora",   # your erbot loader should recognize this
+    truth     = cora_gold,
+    fields    = fields_cora,
+    k_grid    = seq(10, 500, by = 10),
+    write_csv = file.path(out_dir, "data", paste0("cora_clean_pred_", file_suffix, ".csv"))
+  )
+  t1 <- Sys.time()
+  runtime_sec <- as.numeric(difftime(t1, t0, units = "secs"))
+
+  # Optionally save performance/agreement table (rounded)
+  if (!is.null(save_perf_file)) {
+    tbl <- NULL
+    if (perf_source == "performance") {
+      tbl <- res$performance
+    } else if (perf_source == "agreement") {
+      tbl <- res$agreement
+    } else { # auto
+      tbl <- if (!is.null(res$performance)) res$performance else res$agreement
+    }
+    if (is.null(tbl)) {
+      warning("No performance/agreement table found in `res`; nothing saved to `save_perf_file`.")
+    } else {
+      er_write_performance(tbl, save_perf_file, digits = digits)
+    }
+  }
+
+  # Save PDF report (assumes your er_save_report_pdf supports `digits` and `runtime_sec`)
+  er_save_report_pdf(
+    res,
+    file         = file.path(out_dir, "results", paste0("cora_report_", file_suffix, ".pdf")),
+    dataset_name = "CORA",
+    top_n        = 5,
+    digits       = digits,        # ensure 5 d.p. in the report
+    runtime_sec  = runtime_sec    # include runtime in the PDF
+  )
+
+  invisible(res)
+}
+
+
+
+#' Run Affiliation entity resolution demo
+#'
+#' Executes the ER pipeline on an Affiliation dataset stored in CSV files.
+#' Produces a cleaned prediction CSV and a PDF report. Optionally writes a
+#' rounded “Clustering Agreement — Performance” table to `.csv` or `.txt`.
+#'
+#' @param data_path Character. Path to the input CSV with raw records
+#'   (e.g., IDs and text fields like \code{affil1}).
+#' @param truth_path Character or \code{NULL}. Path to the gold labels CSV
+#'   (either id + cluster labels, or a pair-list), used for evaluation.
+#'   Set \code{NULL} if no truth is available.
+#' @param fields_affil Character vector. Field names to use for ER
+#'   (default: \code{"affil1"}). If you’ve parsed/normalized more fields,
+#'   pass them here, e.g. \code{c("affil1","affil2")}.
+#' @param out_dir Character. Output directory; subfolders \code{"data"} and
+#'   \code{"results"} will be created if needed.
+#' @param file_suffix Character or numeric. Suffix appended to output filenames
+#'   default: \code{as.numeric(Sys.time())}. You can also pass a timestamp
+#'   string like \code{format(Sys.time(), "\%Y\%m\%d\%H\%M\%S")}.
+#' @param save_perf_file Optional character path to save the performance/agreement
+#'   table (must end with \code{.csv} or \code{.txt}). Numeric columns are rounded.
+#' @param perf_source One of \code{c("auto","performance","agreement")}. With
+#'   \code{"auto"}, prefers \code{res$performance} then falls back to \code{res$agreement}.
+#' @param digits Integer. Number of decimals for metrics displayed/saved (default 5).
+#' @param top_n Integer. Number of “top items/blocks/etc.” to show in the report (default 5).
+#'
+#' @return Invisibly returns the result object from \code{er_main()}.
+#'
+#' @examples
+#' \dontrun{
+#'   run_affiliation(
+#'     data_path    = "D:/erbot/data/affiliationstrings_ids.csv",
+#'     truth_path   = "D:/erbot/data/affiliationstrings_mapping.csv",
+#'     fields_affil = "affil1",
+#'     out_dir      = "D:/erbot/outputs",
+#'     save_perf_file = "D:/erbot/outputs/results/affil_perf.csv"
+#'   )
+#' }
+#'
+#' @seealso \code{\link{er_write_performance}}, \code{\link{er_save_report_pdf}}
+#' @export
+run_affiliation <- function(data_path,
+                            truth_path    = NULL,
+                            fields_affil  = "affil1",
+                            out_dir,
+                            file_suffix   = as.numeric(Sys.time()),
+                            save_perf_file = NULL,
+                            perf_source    = c("auto","performance","agreement"),
+                            digits         = 5,
+                            top_n          = 5) {
+  perf_source <- match.arg(perf_source)
+
+  message("Running Affiliation demo...")
+
+  # Ensure output folders exist
+  dir.create(file.path(out_dir, "data"),    recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(out_dir, "results"), recursive = TRUE, showWarnings = FALSE)
+
+  # Time the pipeline
+  t0 <- Sys.time()
+  res <- er_main(
+    data      = data_path,          # <- your er_main should read from CSV path
+    truth     = truth_path,         # <- or NULL
+    fields    = fields_affil,
+    k_grid    = seq(10, 500, by = 10),
+    write_csv = file.path(out_dir, "data",
+                          paste0("affiliation_pred_", file_suffix, ".csv"))
+  )
+  t1 <- Sys.time()
+  runtime_sec <- as.numeric(difftime(t1, t0, units = "secs"))
+
+  # Optionally save performance/agreement table (rounded)
+  if (!is.null(save_perf_file)) {
+    tbl <- switch(perf_source,
+                  performance = res$performance,
+                  agreement   = res$agreement,
+                  auto        = if (!is.null(res$performance)) res$performance else res$agreement)
+    if (is.null(tbl)) {
+      warning("No performance/agreement table found in `res`; nothing saved to `save_perf_file`.")
+    } else {
+      er_write_performance(tbl, save_perf_file, digits = digits)
+    }
+  }
+
+  # PDF report (no Rmd version or Rmd version—whichever you implemented)
+  er_save_report_pdf(
+    res,
+    file         = file.path(out_dir, "results",
+                             paste0("affiliation_report_", file_suffix, ".pdf")),
+    dataset_name = "Affiliation",
+    top_n        = top_n,
+    digits       = digits,
+    runtime_sec  = runtime_sec
+  )
+
+  invisible(res)
+}
+
+#' @title ER Benchmark: Tuning, Methods (incl. Leiden), and Scalability
+#' @description Turnkey utilities to (1) tune hyperparameters with robust internal criteria,
+#' (2) run mainstream ER methods (kmeans/agglo/DBSCAN/Louvain/Leiden/CW/threshold-CC/MST+edit),
+#' and (3) measure time & memory and generate scalability curves.
+#' @keywords entity-resolution, clustering, graph, tuning, benchmarking
+#' @importFrom stats kmeans dist hclust cutree
+#' @importFrom utils head tail
+#' @importFrom methods is
+#' @exportPattern ^er_
+
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+# ---------- Utilities ---------------------------------------------------------
+
+#' @title Ensure a package (soft dependency)
+#' @keywords internal
+er_require <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    message(sprintf("NOTE: package '%s' not installed; skipping features that need it.", pkg))
+    return(FALSE)
+  }
+  TRUE
+}
+
+#' @title Simple cosine similarity for matrices
+#' @keywords internal
+er_cosine <- function(X) {
+  nrm <- sqrt(rowSums(X * X) + 1e-12)
+  S <- (X %*% t(X)) / outer(nrm, nrm, "*")
+  S[is.na(S)] <- 0
+  S
+}
+
+#' @title Cosine distances (1 - cosine)
+#' @keywords internal
+er_cosine_dist <- function(X) {
+  S <- er_cosine(X)
+  as.dist(pmax(0, 1 - S))
+}
+
+#' @title Measure time & memory of an expression
+#' @return list(time_sec, peak_mem_MB, result)
+#' @keywords internal
+er_measure_tm <- function(expr) {
+  if (er_require("peakRAM")) {
+    out <- peakRAM::peakRAM(res <- force(expr))
+    list(time_sec = as.numeric(out$Elapsed_Time_sec[1]),
+         peak_mem_MB = as.numeric(out$Peak_RAM_Used_MiB[1]),
+         result = res)
+  } else {
+    t <- system.time(res <- force(expr))
+    bytes <- tryCatch(as.numeric(object.size(res)), error = function(e) NA_real_)
+    list(time_sec = as.numeric(t[["elapsed"]]),
+         peak_mem_MB = ifelse(is.na(bytes), NA_real_, bytes / 1024^2),
+         result = res)
+  }
+}
+
+# ---------- Features: TF-IDF + SVD -------------------------------------------
+
+#' @title Text2Vec TF-IDF + SVD embeddings
+#' @param text character vector
+#' @param svd_dim integer, default 200
+#' @param ngram c(lo, hi), default c(1,2)
+#' @param max_features max vocab size
+#' @return numeric matrix n x svd_dim
+#' @export
+er_tfidf_svd <- function(text, svd_dim = 200, ngram = c(1,2), max_features = 100000) {
+  stopifnot(length(text) > 0)
+  if (!er_require("text2vec") || !er_require("irlba")) {
+    stop("text2vec and irlba are required for er_tfidf_svd().")
+  }
+  it <- text2vec::itoken(text, progressbar = FALSE)
+  v  <- text2vec::create_vocabulary(it, ngram = ngram)
+  v  <- text2vec::prune_vocabulary(v, term_count_min = 2, vocab_term_max = max_features)
+  vectorizer <- text2vec::vocab_vectorizer(v)
+  dtm <- text2vec::create_dtm(it, vectorizer)
+  tfidf <- text2vec::TfIdf$new()
+  X <- tfidf$fit_transform(dtm)
+  s <- irlba::irlba(X, nu = svd_dim, nv = svd_dim)
+  Z <- s$u %*% diag(s$d, nrow = length(s$d), ncol = length(s$d))
+  Z
+}
+
+# ---------- Methods: Vector-space --------------------------------------------
+
+#' @title K-means on embeddings
+#' @export
+er_kmeans_from_Z <- function(Z, k, nstart = 10) {
+  stopifnot(k >= 2, nrow(Z) >= k)
+  stats::kmeans(Z, centers = k, nstart = nstart)$cluster
+}
+
+#' @title Agglomerative (average linkage) on cosine distance
+#' @export
+er_agglomerative_cosine <- function(Z, k) {
+  D <- er_cosine_dist(Z)
+  hc <- stats::hclust(D, method = "average")
+  stats::cutree(hc, k = k)
+}
+
+#' @title DBSCAN on embeddings
+#' @export
+er_dbscan_from_Z <- function(Z, eps, minPts = 5) {
+  if (!er_require("dbscan")) stop("dbscan package required for er_dbscan_from_Z().")
+  fit <- dbscan::dbscan(Z, eps = eps, minPts = minPts)
+  lab <- fit$cluster
+  if (any(lab == 0L)) {
+    noise_idx <- which(lab == 0L)
+    max_id <- max(lab)
+    lab[noise_idx] <- seq_len(length(noise_idx)) + max_id
+  }
+  lab
+}
+
+# ---------- Graph building ----------------------------------------------------
+
+#' @title Build cosine kNN graph with threshold
+#' @param Z matrix n x d
+#' @param k_knn integer
+#' @param min_sim numeric in [0,1]
+#' @return igraph with weights = cosine similarity
+#' @export
+er_knn_graph <- function(Z, k_knn = 50, min_sim = 0.0) {
+  if (!er_require("RANN") || !er_require("igraph")) {
+    stop("RANN and igraph required for er_knn_graph().")
+  }
+  nn <- RANN::nn2(Z, query = Z, k = min(k_knn + 1, nrow(Z)))$nn.idx[, -1, drop = FALSE]
+  n <- nrow(Z)
+  nrm <- sqrt(rowSums(Z * Z) + 1e-12)
+  src <- rep(seq_len(n), times = ncol(nn))
+  dst <- as.vector(nn)
+  num <- rowSums(Z[src, , drop = FALSE] * Z[dst, , drop = FALSE])
+  den <- nrm[src] * nrm[dst]
+  w   <- pmax(0, num / den)
+  keep <- which(w >= min_sim & src < dst)
+  if (!length(keep)) stop("No edges after threshold; try smaller min_sim or larger k_knn.")
+  igraph::graph_from_data_frame(
+    data.frame(from = src[keep], to = dst[keep], weight = w[keep]),
+    directed = FALSE
+  )
+}
+
+# ---------- Graph methods -----------------------------------------------------
+
+#' @title Louvain on kNN graph
+#' @export
+er_louvain_from_Z <- function(Z, k_knn = 50, min_sim = 0.0) {
+  if (!er_require("igraph")) stop("igraph required for er_louvain_from_Z().")
+  g <- er_knn_graph(Z, k_knn = k_knn, min_sim = min_sim)
+  cl <- igraph::cluster_louvain(g, weights = igraph::E(g)$weight)
+  structure(igraph::membership(cl), graph = g)
+}
+
+#' @title Leiden on kNN graph (via leidenbase)
+#' @param resolution_parameter numeric; higher -> more clusters
+#' @param partition_type "ModularityVertexPartition" or "CPMVertexPartition"
+#' @export
+er_leiden_from_Z <- function(
+  Z, k_knn = 50, min_sim = 0.1,
+  resolution_parameter = 0.5,
+  partition_type = "ModularityVertexPartition"
+) {
+  if (!er_require("igraph") || !er_require("leidenbase")) {
+    stop("Packages 'igraph' and 'leidenbase' required for er_leiden_from_Z().")
+  }
+  g <- er_knn_graph(Z, k_knn = k_knn, min_sim = min_sim)
+  part <- leidenbase::leiden_find_partition(
+    g,
+    partition_type = partition_type,
+    weights = igraph::E(g)$weight,
+    resolution_parameter = resolution_parameter,
+    seed = 1,
+    n_iterations = -1
+  )
+  structure(part$membership, graph = g)
+}
+
+#' @title Chinese Whispers (label propagation)
+#' @export
+er_chinese_whispers <- function(g, iters = 20) {
+  if (!er_require("igraph")) stop("igraph required for er_chinese_whispers().")
+  n <- igraph::vcount(g)
+  lab <- seq_len(n)
+  for (t in seq_len(iters)) {
+    order <- sample.int(n)
+    for (v in order) {
+      ne  <- igraph::neighbors(g, v)
+      if (length(ne) == 0) next
+      ws  <- igraph::E(g)[from(v) %--% ne]$weight
+      labs <- lab[as.integer(ne)]
+      lab[v] <- as.integer(names(which.max(tapply(ws, labs, sum))))
+    }
+  }
+  lab
+}
+
+#' @title Thresholded connected components on cosine similarity
+#' @export
+er_threshold_cc <- function(Z, min_sim = 0.6, k_knn = 100) {
+  g <- er_knn_graph(Z, k_knn = k_knn, min_sim = min_sim)
+  igraph::components(g)$membership
+}
+
+#' @title MST + Edit Distance threshold (single text field)
+#' @export
+er_mst_edit <- function(text, max_dist = 3) {
+  if (!er_require("igraph") || !er_require("stringdist")) {
+    stop("igraph and stringdist required for er_mst_edit().")
+  }
+  n <- length(text)
+  if (n > 8000L) warning("er_mst_edit(): O(n^2) edit-distance; add blocking for n>8k.")
+  D <- as.matrix(stringdist::stringdistmatrix(text, text, method = "lv"))
+  g  <- igraph::graph_from_adjacency_matrix(D, mode = "undirected", weighted = TRUE, diag = FALSE)
+  mst <- igraph::mst(g, weights = igraph::E(g)$weight)
+  bad <- which(igraph::E(mst)$weight > max_dist)
+  if (length(bad)) mst <- igraph::delete_edges(mst, bad)
+  igraph::components(mst)$membership
+}
+
+# ---------- Internal & External Criteria -------------------------------------
+
+#' @title Internal metrics (Silhouette/CH/DB/Modularity/Stability)
+#' @export
+er_internal_metrics <- function(Z, labels, G = NULL, sample_n = 2000L) {
+  stopifnot(length(labels) == nrow(Z))
+  n <- nrow(Z); k <- length(unique(labels))
+
+  # Silhouette (sampled, cosine)
+  sil <- NA_real_
+  if (k >= 2L) {
+    idx <- if (n > sample_n) sample.int(n, sample_n) else seq_len(n)
+    D   <- er_cosine_dist(Z[idx, , drop = FALSE])
+    if (er_require("cluster")) {
+      sil_obj <- cluster::silhouette(as.integer(labels[idx]), D)
+      sil <- mean(sil_obj[, 3L])
+    }
+  }
+
+  # CH & DB (Euclidean in Z)
+  X <- Z
+  mu <- colMeans(X)
+  W <- 0; B <- 0
+  centers <- rowsum(X, labels) / as.numeric(table(labels))
+  for (lab in unique(labels)) {
+    Xi <- X[labels == lab, , drop = FALSE]
+    ci <- centers[as.character(lab), , drop = FALSE]
+    W  <- W + sum((Xi - matrix(ci, nrow(Xi), ncol(Xi), TRUE))^2)
+    B  <- B + nrow(Xi) * sum((ci - mu)^2)
+  }
+  CH <- if (k > 1L && k < n) (B/(k-1)) / (W/(n-k)) else NA_real_
+
+  db <- NA_real_
+  if (k >= 2L) {
+    Si <- sapply(unique(labels), function(l) {
+      Xi <- X[labels == l, , drop = FALSE]
+      ci <- centers[as.character(l), , drop = FALSE]
+      sqrt(mean(rowSums((Xi - matrix(ci, nrow(Xi), ncol(Xi), TRUE))^2)))
+    })
+    C <- as.matrix(dist(centers))
+    R <- outer(Si, Si, "+") / (C + 1e-12)
+    diag(R) <- -Inf
+    db <- mean(apply(R, 1L, max), na.rm = TRUE)
+  }
+
+  Q <- NA_real_
+  if (!is.null(G) && er_require("igraph")) {
+    Q <- igraph::modularity(G, membership = labels, weights = igraph::E(G)$weight)
+  }
+
+  list(silhouette = sil, ch = CH, db = db, modularity = Q)
+}
+
+#' @title Penalized Silhouette (avoid monotone-in-k)
+#' @export
+er_penalize_silhouette <- function(sil, k, n, alpha = NULL) {
+  if (is.na(sil) || is.na(k) || k < 2L) return(NA_real_)
+  if (is.null(alpha)) {
+    kmax <- max(3, floor(sqrt(n)))
+    alpha <- 0.1 / max(1, log(kmax))
+  }
+  sil - alpha * log(k)
+}
+
+#' @title Stability via bootstrap ARI
+#' @export
+er_stability_ari <- function(Z, B = 10L, frac = 0.8, fit_fun, ...) {
+  if (!er_require("mclust")) return(NA_real_)
+  ARIs <- numeric(B)
+  for (b in seq_len(B)) {
+    idx <- sample.int(nrow(Z), max(2L, floor(frac * nrow(Z))))
+    s1 <- idx[seq_along(idx) %% 2 == 1]
+    s2 <- idx[seq_along(idx) %% 2 == 0]
+    if (length(s1) < 2 || length(s2) < 2) next
+    lab1 <- fit_fun(Z[s1, , drop = FALSE], ...)
+    lab2 <- fit_fun(Z[s2, , drop = FALSE], ...)
+    ARIs[b] <- mclust::adjustedRandIndex(lab1, lab2)
+  }
+  mean(ARIs, na.rm = TRUE)
+}
+
+#' @title External metrics (ARI, pairwise F1)
+#' @export
+er_external_metrics <- function(labels, truth_pairs = NULL, truth_vec = NULL) {
+  out <- list(ari = NA_real_, pairwise_f1 = NA_real_)
+  if (!is.null(truth_vec) && er_require("mclust")) {
+    out$ari <- mclust::adjustedRandIndex(labels, truth_vec)
+  }
+  if (!is.null(truth_pairs)) {
+    TP <- FP <- FN <- 0L
+    for (r in seq_len(nrow(truth_pairs))) {
+      i <- truth_pairs$i[r]; j <- truth_pairs$j[r]; y <- truth_pairs$label[r]
+      pred <- as.integer(labels[i] == labels[j])
+      if (pred == 1L && y == 1L) TP <- TP + 1L
+      if (pred == 1L && y == 0L) FP <- FP + 1L
+      if (pred == 0L && y == 1L) FN <- FN + 1L
+    }
+    prec <- ifelse(TP + FP == 0, NA_real_, TP/(TP+FP))
+    rec  <- ifelse(TP + FN == 0, NA_real_, TP/(TP+FN))
+    out$pairwise_f1 <- ifelse(is.na(prec) || is.na(rec) || prec+rec==0, NA_real_, 2*prec*rec/(prec+rec))
+  }
+  out
+}
+
+# ---------- Tuning Engine (incl. Leiden) -------------------------------------
+
+#' @title Tune ER methods over parameter grids (incl. Leiden if available)
+#' @param data data.frame with ER text fields
+#' @param fields character vector of fields to use (concatenated)
+#' @param methods subset of:
+#'   c("kmeans","agglo","dbscan","louvain","leiden","cw","threshold_cc","mst_edit")
+#' @param grids named list of parameter grids per method
+#' @param objective one of: "silhouette","silhouette_penalized","ch","db_min","modularity","stability","ari","pairwise_f1"
+#' @param truth optional list(truth_vec=..., truth_pairs=...)
+#' @return list(curves=data.frame, best=list per method)
+#' @export
+er_tune <- function(data, fields,
+                    methods = c("kmeans","agglo","dbscan","louvain","leiden","cw","threshold_cc","mst_edit"),
+                    grids   = list(),
+                    objective = "silhouette_penalized",
+                    truth = NULL,
+                    svd_dim = 200,
+                    sample_n_sil = 2000L,
+                    stability_B = 10L) {
+
+  stopifnot(all(fields %in% names(data)))
+  txt <- do.call(paste, c(unname(data[fields]), sep = " "))
+  Z <- er_tfidf_svd(txt, svd_dim = svd_dim)
+
+  # filter out methods lacking deps
+  has_igraph  <- er_require("igraph")
+  has_RANN    <- er_require("RANN")
+  has_leiden  <- er_require("leidenbase")
+  methods <- unique(Filter(function(m) {
+    switch(m,
+      kmeans = TRUE,
+      agglo  = TRUE,
+      dbscan = er_require("dbscan"),
+      louvain= has_igraph && has_RANN,
+      leiden = has_igraph && has_RANN && has_leiden,
+      cw     = has_igraph && has_RANN,
+      threshold_cc = has_igraph && has_RANN,
+      mst_edit = er_require("stringdist") && has_igraph,
+      FALSE)
+  }, methods))
+  if (!length(methods)) stop("No methods available (missing dependencies).")
+
+  rows <- list()
+  best_by_method <- list()
+
+  score_row <- function(m, params, labels, G = NULL) {
+    int <- er_internal_metrics(Z, labels, G = G, sample_n = sample_n_sil)
+    ps  <- er_penalize_silhouette(int$silhouette, length(unique(labels)), nrow(Z))
+    stab <- if (identical(objective, "stability")) {
+      er_stability_ari(Z, B = stability_B, fit_fun = function(X, ...) {
+        switch(m,
+          kmeans = er_kmeans_from_Z(X, k = params$k),
+          agglo  = er_agglomerative_cosine(X, k = params$k),
+          dbscan = er_dbscan_from_Z(X, eps = params$eps, minPts = params$minPts),
+          louvain= as.integer(er_louvain_from_Z(X, k_knn = params$k_knn, min_sim = params$min_sim)),
+          leiden = as.integer(er_leiden_from_Z(X, k_knn = params$k_knn, min_sim = params$min_sim,
+                                               resolution_parameter = params$resolution_parameter %||% 0.5)),
+          cw     = {
+            Gx <- er_knn_graph(X, k_knn = params$k_knn %||% 50, min_sim = params$min_sim %||% 0.1)
+            er_chinese_whispers(Gx, iters = params$iters %||% 20)
+          },
+          threshold_cc = er_threshold_cc(X, min_sim = params$min_sim, k_knn = params$k_knn),
+          mst_edit = er_mst_edit(params$text, max_dist = params$max_dist)
+        )
+      })
+    } else NA_real_
+
+    ext <- if (!is.null(truth)) er_external_metrics(labels,
+                     truth_pairs = truth$truth_pairs, truth_vec = truth$truth_vec) else list(ari=NA_real_, pairwise_f1=NA_real_)
+
+    data.frame(
+      method = m,
+      k = if (!is.null(params$k)) params$k else NA_integer_,
+      k_knn = if (!is.null(params$k_knn)) params$k_knn else NA_integer_,
+      min_sim = if (!is.null(params$min_sim)) params$min_sim else NA_real_,
+      eps = if (!is.null(params$eps)) params$eps else NA_real_,
+      minPts = if (!is.null(params$minPts)) params$minPts else NA_real_,
+      resolution_parameter = if (!is.null(params$resolution_parameter)) params$resolution_parameter else NA_real_,
+      max_dist = if (!is.null(params$max_dist)) params$max_dist else NA_real_,
+      silhouette = int$silhouette,
+      silhouette_pen = ps,
+      ch = int$ch,
+      db = int$db,
+      modularity = int$modularity,
+      stability = stab,
+      ari = ext$ari,
+      pairwise_f1 = ext$pairwise_f1,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  for (m in methods) {
+    g <- grids[[m]]
+    if (is.null(g)) {
+      g <- switch(m,
+        kmeans = expand.grid(k = seq(10, 300, by = 10), nstart = 10),
+        agglo  = expand.grid(k = seq(10, 300, by = 10)),
+        dbscan = expand.grid(eps = c(0.8, 1.0, 1.2), minPts = c(5, 10)),
+        louvain= expand.grid(k_knn = c(20, 50, 100), min_sim = c(0.0, 0.1, 0.2)),
+        leiden = expand.grid(k_knn = c(20, 50, 100), min_sim = c(0.0, 0.1, 0.2),
+                             resolution_parameter = c(0.2, 0.5, 1.0)),
+        cw     = expand.grid(iters = c(10, 20, 50), k_knn = 50, min_sim = 0.1),
+        threshold_cc = expand.grid(k_knn = c(50, 100), min_sim = c(0.5, 0.6, 0.7)),
+        mst_edit = expand.grid(max_dist = c(1,2,3)),
+        stop(sprintf("Unknown method %s", m))
+      )
+    }
+
+    method_rows <- vector("list", nrow(g))
+    best_row <- NULL; best_score <- -Inf
+
+    for (i in seq_len(nrow(g))) {
+      params <- as.list(g[i, , drop = FALSE])
+      tm <- er_measure_tm({
+        if (m == "kmeans") {
+          lab <- er_kmeans_from_Z(Z, k = params$k, nstart = params$nstart %||% 10); list(labels = lab, graph = NULL)
+        } else if (m == "agglo") {
+          lab <- er_agglomerative_cosine(Z, k = params$k); list(labels = lab, graph = NULL)
+        } else if (m == "dbscan") {
+          lab <- er_dbscan_from_Z(Z, eps = params$eps, minPts = params$minPts); list(labels = lab, graph = NULL)
+        } else if (m == "louvain") {
+          lab <- er_louvain_from_Z(Z, k_knn = params$k_knn, min_sim = params$min_sim)
+          G <- attr(lab, "graph"); list(labels = as.integer(lab), graph = G)
+        } else if (m == "leiden") {
+          lab <- er_leiden_from_Z(Z, k_knn = params$k_knn, min_sim = params$min_sim,
+                                  resolution_parameter = params$resolution_parameter)
+          G <- attr(lab, "graph"); list(labels = as.integer(lab), graph = G)
+        } else if (m == "cw") {
+          G <- er_knn_graph(Z, k_knn = params$k_knn %||% 50, min_sim = params$min_sim %||% 0.1)
+          lab <- er_chinese_whispers(G, iters = params$iters)
+          list(labels = lab, graph = G)
+        } else if (m == "threshold_cc") {
+          lab <- er_threshold_cc(Z, min_sim = params$min_sim, k_knn = params$k_knn)
+          G <- er_knn_graph(Z, k_knn = params$k_knn, min_sim = params$min_sim)
+          list(labels = lab, graph = G)
+        } else if (m == "mst_edit") {
+          text_field <- data[[fields[1]]]
+          lab <- er_mst_edit(text_field, max_dist = params$max_dist)
+          list(labels = lab, graph = NULL)
+        } else stop("Unknown method.")
+      })
+      row <- score_row(m, params, tm$result$labels, G = tm$result$graph)
+      row$time_sec    <- tm$time_sec
+      row$peak_mem_MB <- tm$peak_mem_MB
+      method_rows[[i]] <- row
+
+      sc <- switch(objective,
+        silhouette = row$silhouette,
+        silhouette_penalized = row$silhouette_pen,
+        ch = row$ch,
+        db_min = -row$db,
+        modularity = row$modularity,
+        stability = row$stability,
+        ari = row$ari,
+        pairwise_f1 = row$pairwise_f1,
+        stop("Unknown objective")
+      )
+      if (!is.na(sc) && sc > best_score) { best_score <- sc; best_row <- row }
+    }
+
+    method_df <- do.call(rbind, method_rows)
+    rows[[m]] <- method_df
+    best_by_method[[m]] <- best_row
+  }
+
+  curves <- do.call(rbind, rows)
+  list(curves = curves, best = best_by_method)
+}
+
+# ---------- Scalability -------------------------------------------------------
+
+#' @title Scalability curves by subsampling n
+#' @export
+er_scaling_curve <- function(data, fields, n_seq,
+                             method = "kmeans",
+                             params_fixed = list(),
+                             svd_dim = 200) {
+  set.seed(1)
+  stopifnot(all(fields %in% names(data)))
+  txt_all <- do.call(paste, c(unname(data[fields]), sep = " "))
+  out <- list()
+  for (n in n_seq) {
+    idx <- if (length(txt_all) > n) sample.int(length(txt_all), n) else seq_along(txt_all)
+    Z <- er_tfidf_svd(txt_all[idx], svd_dim = svd_dim)
+    tm <- er_measure_tm({
+      lab <- switch(method,
+        kmeans = er_kmeans_from_Z(Z, k = params_fixed$k %||% max(2, floor(sqrt(n)))),
+        agglo  = er_agglomerative_cosine(Z, k = params_fixed$k %||% max(2, floor(sqrt(n)))),
+        dbscan = er_dbscan_from_Z(Z, eps = params_fixed$eps %||% 1.0, minPts = params_fixed$minPts %||% 5),
+        louvain= { m <- er_louvain_from_Z(Z, k_knn = params_fixed$k_knn %||% 50, min_sim = params_fixed$min_sim %||% 0.1); as.integer(m) },
+        leiden = { m <- er_leiden_from_Z(Z, k_knn = params_fixed$k_knn %||% 50, min_sim = params_fixed$min_sim %||% 0.1,
+                                         resolution_parameter = params_fixed$resolution_parameter %||% 0.5); as.integer(m) },
+        threshold_cc = er_threshold_cc(Z, min_sim = params_fixed$min_sim %||% 0.6, k_knn = params_fixed$k_knn %||% 100),
+        cw = {
+          G <- er_knn_graph(Z, k_knn = params_fixed$k_knn %||% 50, min_sim = params_fixed$min_sim %||% 0.1)
+          er_chinese_whispers(G, iters = params_fixed$iters %||% 20)
+        },
+        stop("Unsupported method in scaling.")
+      )
+      lab
+    })
+    out[[length(out)+1]] <- data.frame(
+      n = n,
+      method = method,
+      time_sec = tm$time_sec,
+      peak_mem_MB = tm$peak_mem_MB,
+      k = length(unique(tm$result)),
+      stringsAsFactors = FALSE
+    )
+  }
+  do.call(rbind, out)
+}
+
+#' ER quality metrics: CPM, modularity, silhouette, DB, CH, stability, pairwise & B3
+#'
+#' Unified helpers to score graph/vectors clusterings in ER.
+#' - Graph objectives: CPM (resolution gamma), modularity.
+#' - Vector metrics: Silhouette, Davies–Bouldin (DB), Calinski–Harabasz (CH).
+#' - Stability: mean pairwise ARI across multiple runs (labels of same length).
+#' - External with truth: Pairwise P/R/F1 (no explicit pair enumeration), B³ P/R/F1, ARI.
+#'
+#' @param g igraph graph (optional; for CPM/modularity).
+#' @param membership Integer vector of cluster labels (length = n).
+#' @param X Numeric matrix/data.frame of features/embeddings (rows = n) (optional; for silhouette/DB/CH).
+#' @param D Optional distance object/matrix for silhouette (if provided, X is ignored for silhouette).
+#' @param gamma Numeric CPM resolution parameter (default 0.05).
+#' @param weights Optional edge weights vector matching E(g) (defaults to E(g)$weight if present).
+#' @param stability_labels Optional list of label vectors (same length as membership) for stability ARI.
+#' @param truth Optional integer/factor vector of gold cluster ids (length = n) for external metrics.
+#' @param dist_method Distance method for silhouette if D is not given (default "euclidean").
+#'
+#' @return Named list with available metrics.
+#' @export
+#' @importFrom igraph vcount ecount induced_subgraph E modularity is.igraph
+#' @importFrom stats dist
+#' @importFrom cluster silhouette
+#' @importFrom mclust adjustedRandIndex
+er_eval_metrics <- function(
+  g                = NULL,
+  membership,
+  X                = NULL,
+  D                = NULL,
+  gamma            = 0.05,
+  weights          = NULL,
+  stability_labels = NULL,
+  truth            = NULL,
+  dist_method      = "euclidean"
+) {
+  stopifnot(length(membership) >= 2L)
+
+  out <- list(n = length(membership), k = length(unique(membership)))
+
+  # ---------------- Graph-based objectives ----------------
+  if (!is.null(g) && igraph::is.igraph(g)) {
+    # Modularity (igraph’s standard modularity; resolution parameter is not exposed)
+    out$modularity <- try_silent(igraph::modularity(g, membership, weights = weights))
+
+    # CPM score (resolution-free baseline gamma)
+    out$cpm <- try_silent(er_cpm_score(g, membership, gamma = gamma, weights = weights))
+  }
+
+  # ---------------- Vector-based internal indices ----------------
+  if (!is.null(D) || !is.null(X)) {
+    # Silhouette
+    if (is.null(D)) {
+      D <- stats::dist(X, method = dist_method)
+    }
+    sil <- try_silent(cluster::silhouette(membership, D))
+    out$silhouette_mean <- if (!inherits(sil, "try-error")) mean(sil[, 3]) else NA_real_
+
+    # DB & CH (implemented to avoid heavyweight deps)
+    if (!is.null(X)) {
+      db_ch <- try_silent(er_db_ch_indices(X, membership))
+      if (!inherits(db_ch, "try-error")) {
+        out$davies_bouldin <- db_ch$db
+        out$calinski_harabasz <- db_ch$ch
+      } else {
+        out$davies_bouldin <- NA_real_
+        out$calinski_harabasz <- NA_real_
+      }
+    }
+  }
+
+  # ---------------- Stability (mean ARI across runs) ----------------
+  if (!is.null(stability_labels) && length(stability_labels) >= 2L) {
+    out$stability_mean_ari <- try_silent(er_mean_ari(stability_labels))
+  }
+
+  # ---------------- External metrics (with truth) ----------------
+  if (!is.null(truth)) {
+    ext <- try_silent(er_external_scores(membership, truth))
+    if (!inherits(ext, "try-error")) out <- c(out, ext)
+  }
+
+  out
+}
+
+#' CPM quality function for a partition on a graph
+#' @param g igraph graph
+#' @param membership integer labels
+#' @param gamma numeric resolution parameter
+#' @param weights optional numeric vector; defaults to E(g)$weight
+#' @keywords internal
+#' @export
+er_cpm_score <- function(g, membership, gamma = 0.05, weights = NULL) {
+  if (is.null(weights) && "weight" %in% igraph::edge_attr_names(g)) {
+    weights <- igraph::E(g)$weight
+  }
+  # sum_c (e_c - gamma * n_c*(n_c-1)/2); e_c is edge count or weight sum inside c
+  score <- 0
+  for (lab in unique(membership)) {
+    vids <- which(membership == lab)
+    subg <- igraph::induced_subgraph(g, vids)
+    n_c  <- igraph::vcount(subg)
+    if (n_c < 2) next
+    if (!is.null(weights) && length(weights) == igraph::ecount(g)) {
+      # Map to subgraph edges
+      # (simplest robust way: sum weights of edges present in subgraph)
+      e_c <- sum(igraph::E(subg)$weight %||% rep(1, igraph::ecount(subg)))
+    } else {
+      e_c <- igraph::ecount(subg)
+    }
+    score <- score + (e_c - gamma * n_c * (n_c - 1) / 2)
+  }
+  as.numeric(score)
+}
+
+#' Davies–Bouldin and Calinski–Harabasz indices
+#' @param X numeric matrix (rows = samples)
+#' @param membership integer labels
+#' @keywords internal
+#' @export
+er_db_ch_indices <- function(X, membership) {
+  X <- as.matrix(X)
+  labs <- as.integer(factor(membership))
+  k <- length(unique(labs))
+  n <- nrow(X)
+  if (k < 2L || n < k) return(list(db = NA_real_, ch = NA_real_))
+
+  # cluster centers, scatters
+  centers <- vapply(split(seq_len(n), labs), function(idx) colMeans(X[idx, , drop = FALSE]), numeric(ncol(X)))
+  centers <- t(centers)           # k x p
+  # within scatter (mean distance to center per cluster)
+  wc <- vapply(seq_len(k), function(j) {
+    idx <- which(labs == j); if (length(idx) == 0) return(0)
+    mean(rowSums((X[idx, , drop = FALSE] - matrix(centers[j, ], nrow = length(idx), ncol = ncol(X), byrow = TRUE))^2))^0.5
+  }, numeric(1))
+
+  # Davies–Bouldin
+  # R_ij = (S_i + S_j) / M_ij; DB = mean_i max_{j != i} R_ij
+  dist_centers <- as.matrix(dist(centers))
+  R <- matrix(0, k, k)
+  for (i in 1:k) {
+    for (j in 1:k) if (i != j) {
+      R[i, j] <- (wc[i] + wc[j]) / max(dist_centers[i, j], .Machine$double.eps)
+    }
+  }
+  db <- mean(apply(R + diag(-Inf, k), 1, max))
+
+  # Calinski–Harabasz: (B/(k-1)) / (W/(n-k))
+  grand <- colMeans(X)
+  W <- 0; B <- 0
+  for (j in 1:k) {
+    idx <- which(labs == j); nj <- length(idx); if (nj == 0) next
+    # within
+    W <- W + sum(rowSums((X[idx, , drop = FALSE] - matrix(centers[j, ], nrow = nj, ncol = ncol(X), byrow = TRUE))^2))
+    # between
+    B <- B + nj * sum((centers[j, ] - grand)^2)
+  }
+  ch <- (B / max(k - 1, 1)) / (W / max(n - k, 1))
+  list(db = as.numeric(db), ch = as.numeric(ch))
+}
+
+#' Mean ARI across a list of label vectors (stability)
+#' @param labels_list list of integer vectors (same length)
+#' @export
+er_mean_ari <- function(labels_list) {
+  L <- length(labels_list)
+  if (L < 2L) return(NA_real_)
+  idx_pairs <- utils::combn(L, 2)
+  aris <- apply(idx_pairs, 2, function(p) {
+    mclust::adjustedRandIndex(labels_list[[p[1]]], labels_list[[p[2]]])
+  })
+  mean(aris)
+}
+
+#' External scores (pairwise P/R/F1, B³ P/R/F1, ARI)
+#' @param pred integer/factor vector of predicted clusters
+#' @param truth integer/factor vector of gold clusters
+#' @export
+er_external_scores <- function(pred, truth) {
+  stopifnot(length(pred) == length(truth))
+  pred  <- as.integer(factor(pred))
+  truth <- as.integer(factor(truth))
+  n <- length(pred)
+
+  # Pairwise counts without enumerating all pairs
+  n_pairs <- function(counts) sum(counts * (counts - 1) / 2)
+  tab_pt <- table(pred, truth)             # k x g
+  tp <- sum(tab_pt * (tab_pt - 1) / 2)     # sum over intersections C(s_ij, 2)
+  pp <- n_pairs(rowSums(tab_pt))           # predicted pairs
+  gp <- n_pairs(colSums(tab_pt))           # gold pairs
+
+  precision <- if (pp > 0) tp / pp else 0
+  recall    <- if (gp > 0) tp / gp else 0
+  f1_pair   <- if (precision + recall > 0) 2 * precision * recall / (precision + recall) else 0
+
+  # B³
+  sizes_pred  <- rowSums(tab_pt)[match(pred, as.integer(rownames(tab_pt)))]
+  sizes_truth <- colSums(tab_pt)[match(truth, as.integer(colnames(tab_pt)))]
+  # overlap per item i is just count in its (pred, truth)
+  overlap_vec <- tab_pt[cbind(pred, truth)][seq_len(n)]
+  b3_precision <- mean(overlap_vec / sizes_pred)
+  b3_recall    <- mean(overlap_vec / sizes_truth)
+  b3_f1 <- if (b3_precision + b3_recall > 0) 2 * b3_precision * b3_recall / (b3_precision + b3_recall) else 0
+
+  # ARI
+  ari <- mclust::adjustedRandIndex(pred, truth)
+
+  list(
+    pair_precision = as.numeric(precision),
+    pair_recall    = as.numeric(recall),
+    pair_f1        = as.numeric(f1_pair),
+    b3_precision   = as.numeric(b3_precision),
+    b3_recall      = as.numeric(b3_recall),
+    b3_f1          = as.numeric(b3_f1),
+    ari            = as.numeric(ari)
+  )
+}
+
+# --- small helper ---
+`%||%` <- function(a, b) if (is.null(a)) b else a
+try_silent <- function(expr) { try(expr, silent = TRUE) }

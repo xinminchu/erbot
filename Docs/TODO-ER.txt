@@ -1,3 +1,27 @@
+Nov 7, 2025
+
+ Work in Progress
+ • Established the parameter tuning framework (`70_tuning.R`) and integrated it with the main ER
+ pipeline (`er_main()`, `run_cora()`).
+ • Defined major parameter groups (clustering, similarity, thresholds, iterations) and generated the
+ reference summary PDF.
+ • Implemented the initial tuning function structure (e.g., `er_tune()`), supporting grid or random
+ search using `expand.grid()` and `purrr::map()`.
+ • Integrated internal evaluation metrics (ARI, silhouette, modularity) for automatic best-parameter
+ selection.
+ • Added roxygen2 documentation and testthat structure for initial testing.
+ • Generated reference summary tables for Edit-distance, SN, CPM, Louvain, and other methods.
+ • Implement adaptive or hierarchical search methods (e.g., Bayesian optimization) to improve
+ efficiency.
+ • Define unified performance criteria (e.g., ARI or silhouette) and add early-stopping mechanism.
+ • Standardize output structure for tuning results and create visualization tools (e.g.,
+ `er_plot_tuning_curve()`).
+ • Integrate tuning process into the main pipeline (`er_main(..., tune=TRUE)`) for full automation.
+ • Run tuning experiments on CORA, Affiliation, and NCVoter datasets; compare tuned vs. default
+ parameters.
+ • Record runtime performance and analyze algorithmic efficiency.
+
+
 Oct 24, 2025
 
 Read papers on parameter tuning, ER benchmarks,
