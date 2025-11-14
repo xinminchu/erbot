@@ -1,3 +1,10 @@
+Nov 14, 2025
+Report: summary of parameter tuning in ERBOT (https://github.com/xinminchu/erbot/tree/main/Docs)
+
+No specific question. Keep going on package building and improvement.
+
+
+
 Nov 7, 2025
 
  Work in Progress
@@ -21,6 +28,10 @@ Nov 7, 2025
  parameters.
  • Record runtime performance and analyze algorithmic efficiency.
 
+QuickQuestion: how to understand algorithm (such as Fast Local Move) quickly and use or improve it in my research?
+
+Todo:
+Summary of work on tuning parameters
 
 Oct 24, 2025
 
