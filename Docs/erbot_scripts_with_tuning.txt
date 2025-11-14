@@ -2111,6 +2111,367 @@ run_affiliation <- function(data_path,
 }
 
 
+# -------------------------------------------------------------------
+# Unified ERBOT demo runner
+#   dataset = "cora" | "affiliation" | "d10k"
+# -------------------------------------------------------------------
+run_erbot_dataset <- function(
+    dataset      = c("cora", "affiliation", "d10k"),
+    out_dir,
+    # ---- CORA-specific ----
+    fields_cora  = c("title", "authors", "address"),
+    # ---- Affiliation-specific ----
+    data_affil   = NULL,            # e.g. "D:/erbot/data/affiliationstrings_ids.csv"
+    truth_affil  = NULL,            # e.g. "D:/erbot/data/affiliationstrings_mapping.csv" or NULL
+    fields_affil = "affil1",
+    # ---- D10K-specific ----
+    data_d10k    = NULL,            # e.g. "D:/erbot/data/D10K.csv"
+    truth_d10k   = NULL,            # path OR id+cluster table OR pair-list (handled by er_truth_from_any)
+    fields_d10k  = c("name", "address", "city", "state", "zip"),
+    # ---- common options ----
+    digits       = 5,
+    top_n        = 5,
+    k_grid_common = seq(10, 500, by = 10)
+) {
+  dataset <- match.arg(dataset)
+
+  # Create subfolders once (all three demos use the same layout)
+  dir.create(file.path(out_dir, "data"),    recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(out_dir, "results"), recursive = TRUE, showWarnings = FALSE)
+
+  # Use a readable timestamp suffix
+  file_suffix <- format(Sys.time(), "%Y%m%d%H%M%S")
+
+  if (dataset == "cora") {
+    # --------------------------------------------------------------
+    # CORA: uses the 'cora' package, internal loader "data = 'cora'"
+    # and gold labels 'cora_gold' (already wired in run_cora()).
+    # --------------------------------------------------------------
+    res <- run_cora(
+      fields_cora    = fields_cora,
+      out_dir        = out_dir,
+      file_suffix    = file_suffix,
+      save_perf_file = file.path(out_dir, "results",
+                                 paste0("cora_perf_", file_suffix, ".csv")),
+      digits         = digits
+    )
+
+  } else if (dataset == "affiliation") {
+    # --------------------------------------------------------------
+    # Affiliation: needs CSV paths for data + optional truth.
+    # 'data_affil' MUST be provided; 'truth_affil' can be NULL.
+    # --------------------------------------------------------------
+    if (is.null(data_affil)) {
+      stop("For dataset = 'affiliation', you must provide 'data_affil' (CSV path).")
+    }
+
+    res <- run_affiliation(
+      data_path      = data_affil,
+      truth_path     = truth_affil,   # can be NULL if no gold labels
+      fields_affil   = fields_affil,
+      out_dir        = out_dir,
+      file_suffix    = file_suffix,
+      save_perf_file = file.path(out_dir, "results",
+                                 paste0("affiliation_perf_", file_suffix, ".csv")),
+      perf_source    = "auto",
+      digits         = digits,
+      top_n          = top_n
+    )
+
+  } else if (dataset == "d10k") {
+    # --------------------------------------------------------------
+    # D10K synthetic: typically a large CSV with synthetic records.
+    #  - 'data_d10k' MUST be provided (CSV path or data.frame).
+    #  - 'truth_d10k' is optional and can be:
+    #       * path to CSV/TSV/XLSX
+    #       * id+cluster table
+    #       * pair list
+    #    er_truth_from_any() inside er_main() will handle it.
+    #  - fields_d10k: choose actual name/addr fields in your D10K.
+    # --------------------------------------------------------------
+    if (is.null(data_d10k)) {
+      stop("For dataset = 'd10k', you must provide 'data_d10k' (CSV path or data.frame).")
+    }
+
+    message("Running D10K demo...")
+
+    t0 <- Sys.time()
+    res <- er_main(
+      data      = data_d10k,
+      truth     = truth_d10k,      # can be NULL or any format supported by er_truth_from_any()
+      fields    = fields_d10k,
+      k_grid    = k_grid_common,
+      write_csv = file.path(out_dir, "data",
+                            paste0("d10k_pred_", file_suffix, ".csv")),
+      show_progress = TRUE
+    )
+    t1 <- Sys.time()
+    runtime_sec <- as.numeric(difftime(t1, t0, units = "secs"))
+
+    # Optional performance table to CSV (if evaluation ran)
+    if (!is.null(res$performance)) {
+      er_write_performance(
+        res$performance,
+        file   = file.path(out_dir, "results",
+                           paste0("d10k_perf_", file_suffix, ".csv")),
+        digits = digits
+      )
+    }
+
+    # PDF report (reuses your er_save_report_pdf logic)
+    er_save_report_pdf(
+      res,
+      file         = file.path(out_dir, "results",
+                               paste0("d10k_report_", file_suffix, ".pdf")),
+      dataset_name = "D10K",
+      top_n        = top_n,
+      digits       = digits,
+      runtime_sec  = runtime_sec
+    )
+  }
+
+  invisible(res)
+}
+
+# -------------------------------------------------------------------
+# Run ERBOT tuning for a chosen dataset with dataset-specific grids
+#   dataset = "cora" | "affiliation" | "d10k"
+#   Uses er_tune() + er_save_report_pdf()
+# -------------------------------------------------------------------
+run_erbot_tuned_dataset <- function(
+    dataset      = c("cora", "affiliation", "d10k"),
+    out_dir,
+    # ---- Affiliation-specific paths ----
+    data_affil   = NULL,  # e.g. "D:/erbot/data/affiliationstrings_ids.csv"
+    truth_affil  = NULL,  # e.g. "D:/erbot/data/affiliationstrings_mapping.csv" or NULL
+    # ---- D10K-specific paths ----
+    data_d10k    = NULL,  # e.g. "D:/erbot/data/D10K.csv"
+    truth_d10k   = NULL,  # optional truth path or object
+    # ---- common report options ----
+    digits       = 5,
+    top_n        = 5,
+    objective    = "silhouette_penalized"
+) {
+  dataset <- match.arg(dataset)
+
+  # ensure standard subfolders
+  dir.create(file.path(out_dir, "data"),    recursive = TRUE, showWarnings = FALSE)
+  dir.create(file.path(out_dir, "results"), recursive = TRUE, showWarnings = FALSE)
+
+  file_suffix <- format(Sys.time(), "%Y%m%d%H%M%S")
+
+  if (dataset == "cora") {
+    # ==============================================================
+    # 1) CORA: small-ish, rich text, full tuning grid
+    #    - Uses cora package + cora_gold
+    #    - External metrics available if cora_gold is found
+    # ==============================================================
+    message("Tuning CORA...")
+
+    if (!requireNamespace("cora", quietly = TRUE)) {
+      stop("Please install package 'cora' first.")
+    }
+
+    # Load data via ERBOT helper (recognizes key 'cora')
+    df_cora <- er_load_input("cora")
+    truth_vec  <- get("cora_gold", envir = asNamespace("cora"))
+    truth_obj  <- er_truth_from_any(truth_vec)
+
+    fields_cora <- c("title", "authors", "address")
+
+    # Dataset-appropriate grids (moderate search space)
+    grids_cora <- list(
+      kmeans = expand.grid(
+        k      = seq(20, 260, by = 20),
+        nstart = 10
+      ),
+      louvain = expand.grid(
+        k_knn   = c(20, 50, 100),
+        min_sim = c(0.0, 0.1, 0.2)
+      ),
+      leiden = expand.grid(
+        k_knn                = c(20, 50, 100),
+        min_sim              = c(0.0, 0.1, 0.2),
+        resolution_parameter = c(0.2, 0.5, 1.0)
+      ),
+      mst_edit = expand.grid(
+        max_dist = c(1, 2, 3)
+      )
+    )
+
+    methods_cora <- c("kmeans", "louvain", "leiden", "mst_edit")
+
+    t0 <- Sys.time()
+    tuned <- er_tune(
+      data        = df_cora,
+      fields      = fields_cora,
+      methods     = methods_cora,
+      grids       = grids_cora,
+      objective   = objective,
+      truth       = truth_obj,   # gives ARI / pairwise-F1, etc.
+      svd_dim     = 200,
+      sample_n_sil = 2000L,
+      stability_B  = 10L
+    )
+    t1 <- Sys.time()
+    runtime_sec <- as.numeric(difftime(t1, t0, units = "secs"))
+
+    # Tuning-aware PDF report
+    report_file <- file.path(out_dir, "results",
+                             paste0("cora_tuning_", file_suffix, ".pdf"))
+    er_save_report_pdf(
+      tuned,
+      file         = report_file,
+      dataset_name = "CORA",
+      objective    = objective,
+      top_n        = top_n,
+      digits       = digits,
+      runtime_sec  = runtime_sec
+    )
+
+    return(invisible(tuned))
+  }
+
+  if (dataset == "affiliation") {
+    # ==============================================================
+    # 2) Affiliation: medium-sized, single long text field (affil1)
+    #    - Input from CSV; truth optional
+    #    - Grid a bit coarser to keep runtime reasonable
+    # ==============================================================
+    message("Tuning Affiliation...")
+
+    if (is.null(data_affil)) {
+      stop("For dataset = 'affiliation', please provide 'data_affil' (CSV path).")
+    }
+
+    df_affil <- er_load_input(data_affil)
+    truth_obj <- er_truth_from_any(truth_affil)  # NULL is fine
+
+    fields_affil <- "affil1"
+
+    # Focus more on MST + graph methods for affiliation strings
+    grids_affil <- list(
+      kmeans = expand.grid(
+        k      = seq(50, 500, by = 50),
+        nstart = 10
+      ),
+      louvain = expand.grid(
+        k_knn   = c(20, 50, 100),
+        min_sim = c(0.0, 0.1, 0.2)
+      ),
+      leiden = expand.grid(
+        k_knn                = c(20, 50, 100),
+        min_sim              = c(0.0, 0.1, 0.2),
+        resolution_parameter = c(0.2, 0.5, 1.0)
+      ),
+      mst_edit = expand.grid(
+        max_dist = c(1, 2, 3)
+      )
+    )
+
+    methods_affil <- c("kmeans", "louvain", "leiden", "mst_edit")
+
+    t0 <- Sys.time()
+    tuned <- er_tune(
+      data         = df_affil,
+      fields       = fields_affil,
+      methods      = methods_affil,
+      grids        = grids_affil,
+      objective    = objective,
+      truth        = truth_obj,
+      svd_dim      = 200,
+      sample_n_sil = 2000L,
+      stability_B  = 10L
+    )
+    t1 <- Sys.time()
+    runtime_sec <- as.numeric(difftime(t1, t0, units = "secs"))
+
+    report_file <- file.path(out_dir, "results",
+                             paste0("affiliation_tuning_", file_suffix, ".pdf"))
+    er_save_report_pdf(
+      tuned,
+      file         = report_file,
+      dataset_name = "Affiliation",
+      objective    = objective,
+      top_n        = top_n,
+      digits       = digits,
+      runtime_sec  = runtime_sec
+    )
+
+    return(invisible(tuned))
+  }
+
+  if (dataset == "d10k") {
+    # ==============================================================
+    # 3) D10K synthetic: large, so use lighter grids
+    #    - CSV input
+    #    - Fewer methods to control runtime
+    #    - Smaller svd_dim, fewer samples for silhouette
+    # ==============================================================
+    message("Tuning D10K...")
+
+    if (is.null(data_d10k)) {
+      stop("For dataset = 'd10k', please provide 'data_d10k' (CSV path).")
+    }
+
+    df_d10k   <- er_load_input(data_d10k)
+    truth_obj <- er_truth_from_any(truth_d10k)  # can be NULL
+
+    # Adjust these if your D10K schema is different
+    fields_d10k <- c("name", "address", "city", "state", "zip")
+
+    # Coarser grids for big data
+    grids_d10k <- list(
+      kmeans = expand.grid(
+        k      = seq(100, 1000, by = 100),
+        nstart = 5
+      ),
+      louvain = expand.grid(
+        k_knn   = c(30, 60, 120),
+        min_sim = c(0.0, 0.1, 0.2)
+      ),
+      threshold_cc = expand.grid(
+        k_knn   = c(50, 100),
+        min_sim = c(0.5, 0.6, 0.7)
+      )
+    )
+
+    methods_d10k <- c("kmeans", "louvain", "threshold_cc")
+
+    t0 <- Sys.time()
+    tuned <- er_tune(
+      data         = df_d10k,
+      fields       = fields_d10k,
+      methods      = methods_d10k,
+      grids        = grids_d10k,
+      objective    = objective,
+      truth        = truth_obj,
+      svd_dim      = 100,     # smaller SVD dim for speed
+      sample_n_sil = 1500L,   # fewer points for silhouette
+      stability_B  = 5L       # fewer bootstrap replicates
+    )
+    t1 <- Sys.time()
+    runtime_sec <- as.numeric(difftime(t1, t0, units = "secs"))
+
+    report_file <- file.path(out_dir, "results",
+                             paste0("d10k_tuning_", file_suffix, ".pdf"))
+    er_save_report_pdf(
+      tuned,
+      file         = report_file,
+      dataset_name = "D10K",
+      objective    = objective,
+      top_n        = top_n,
+      digits       = digits,
+      runtime_sec  = runtime_sec
+    )
+
+    return(invisible(tuned))
+  }
+}
+
+
+
+
 
 ########################################
 # File: D:/erbot/R/50-tuning.R

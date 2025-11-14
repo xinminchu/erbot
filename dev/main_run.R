@@ -7,9 +7,9 @@ devtools::install()
 
 
 
-# remove.packages("erbot")
-# ### This is normal installation from GitHub ###
-# remotes::install_git("https://github.com/xinminchu/erbot.git", upgrade = "never")
+remove.packages("erbot")
+### This is normal installation from GitHub ###
+remotes::install_git("https://github.com/xinminchu/erbot.git", upgrade = "never")
 
 
 
@@ -84,3 +84,58 @@ res_affil <- run_affiliation(
   top_n          = 5                 # #items in the PDF "Top items" section
 )
 
+
+
+####################################
+# Unified running
+####################################
+
+# 1) CORA (uses cora package, internal loader, and cora_gold truth)
+res_cora <- run_erbot_dataset(
+  dataset   = "cora",
+  out_dir   = "D:/erbot/outputs_cora",
+  fields_cora = c("title", "authors", "address")
+)
+
+# 2) Affiliation (CSV input + optional mapping file as truth)
+res_affil <- run_erbot_dataset(
+  dataset      = "affiliation",
+  out_dir      = "D:/erbot/outputs_affil",
+  data_affil   = "D:/erbot/data/affiliationstrings_ids.csv",
+  truth_affil  = "D:/erbot/data/affiliationstrings_mapping.csv",
+  fields_affil = "affil1"
+)
+
+# 3) D10K synthetic (large CSV, fields tuned for your schema)
+res_d10k <- run_erbot_dataset(
+  dataset     = "d10k",
+  out_dir     = "D:/erbot/outputs_d10k",
+  data_d10k   = "D:/erbot/data/D10K.csv",
+  truth_d10k  = "D:/erbot/data/D10K_truth.csv"   # or NULL if no gold
+)
+
+###################################
+# Unified running with tuning
+###################################
+
+## 1) CORA: internal data + cora_gold
+tuned_cora <- run_erbot_tuned_dataset(
+  dataset = "cora",
+  out_dir = "D:/erbot/outputs_cora"
+)
+
+## 2) Affiliation: CSV + mapping truth
+tuned_affil <- run_erbot_tuned_dataset(
+  dataset     = "affiliation",
+  out_dir     = "D:/erbot/outputs_affil",
+  data_affil  = "D:/erbot/data/affiliationstrings_ids.csv",
+  truth_affil = "D:/erbot/data/affiliationstrings_mapping.csv"
+)
+
+## 3) D10K: large synthetic dataset, coarser grids
+tuned_d10k <- run_erbot_tuned_dataset(
+  dataset    = "d10k",
+  out_dir    = "D:/erbot/outputs_d10k",
+  data_d10k  = "D:/erbot/data/D10K.csv",
+  truth_d10k = "D:/erbot/data/D10K_truth.csv"  # or NULL if no gold
+)
