@@ -7,6 +7,7 @@
 run_cora(
   fields_cora,
   out_dir,
+  file_suffix = as.numeric(Sys.time()),
   save_perf_file = NULL,
   perf_source = c("auto", "performance", "agreement"),
   digits = 5
@@ -19,6 +20,9 @@ to use for entity resolution (e.g., \code{c("title", "authors", "address")}).}
 \item{out_dir}{Character. Path to the output directory where results will
 be written. Subdirectories \code{"data"} and \code{"results"} will be created if needed.}
 
+\item{file_suffix}{Character or numeric. Suffix appended to output filenames
+(default: current Unix timestamp via \code{as.numeric(Sys.time())}).}
+
 \item{save_perf_file}{Optional character path to save the performance/agreement
 table (must end with \code{.csv} or \code{.txt}). Numeric columns are rounded to 5 d.p.}
 
@@ -27,9 +31,6 @@ one of \code{c("performance","agreement","auto")}. With \code{"auto"}, the funct
 prefers \code{res$performance}, then falls back to \code{res$agreement}. Default: \code{"auto"}.}
 
 \item{digits}{Integer; number of decimals for metrics displayed in the PDF header/tables (default 5).}
-
-\item{file_suffix}{Character or numeric. Suffix appended to output filenames
-(default: current Unix timestamp via \code{as.numeric(Sys.time())}).}
 }
 \value{
 Invisibly returns the result object from \code{er_main()}.

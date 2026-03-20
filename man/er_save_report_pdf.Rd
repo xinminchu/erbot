@@ -8,24 +8,44 @@ er_save_report_pdf(
   res,
   file,
   dataset_name = "DATASET",
+  objective = "silhouette_penalized",
   top_n = 5,
   digits = 5,
   runtime_sec = NULL
 )
 }
 \arguments{
-\item{res}{ER result from er_main() or similar. Handles old/new field layouts.}
+\item{res}{ER result from \code{er_main()} (legacy) or \code{er_tune()} (new). If \code{res} is
+a list with \verb{$curves}, it will render tuning/benchmark pages; otherwise it renders
+legacy tables and any provided curve data.frames in \code{res$curves} (list).}
 
 \item{file}{Output PDF path.}
 
 \item{dataset_name}{Title label.}
 
-\item{top_n}{Top items to show if res$top_items present.}
+\item{objective}{Scoring column to highlight best-per-method when \code{res$curves}
+is present. One of: "silhouette","silhouette_penalized","ch","db_min",
+"modularity","stability","ari","pairwise_f1". Default "silhouette_penalized".}
+
+\item{top_n}{Top rows for the Top-N page (if tuning) and for legacy \code{res$top_items}.}
 
 \item{digits}{Rounding for numbers.}
 
-\item{runtime_sec}{Optional total runtime in seconds.}
+\item{runtime_sec}{Optional total runtime in seconds (overrides values inside \code{res}).}
+}
+\value{
+(invisible) the output file path.
 }
 \description{
-Save an organized ER PDF report (backward-compatible, no Rmd)
+Combines legacy \code{er_main()} report pieces (params, performance, agreement, top items)
+with new \code{er_tune()} benchmarking pages (best-per-method, Top-N, tuning curves,
+runtime & peak memory). Automatically adapts to the structure it finds in \code{res}.
+}
+\examples{
+\dontrun{
+tuned <- er_tune(data=cora, fields=c("title","authors","address"),
+                 methods=c("kmeans","louvain","leiden"))
+er_save_report_pdf(tuned, "results/cora_report.pdf", "CORA",
+                   objective="silhouette_penalized", top_n=5)
+}
 }

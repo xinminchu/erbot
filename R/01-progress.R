@@ -1,9 +1,12 @@
 ########################################
+# File: D:/erbot/R/01-progress.R
+########################################
 
 #' Progress bar (start)
-#' @param total_steps integer
-#' @param title character
-#' @return progress environment
+#' @param total_steps Integer. Total number of steps to track.
+#' @param title Character. Label printed at start and finish.
+#' @return A named list of class `"er_progress"` with fields `pb`, `total`,
+#'   `step`, `title`, `t0`, and `last`.
 #' @export
 er_progress_start <- function(total_steps, title = "ER pipeline"){
   pb <- utils::txtProgressBar(min=0, max=total_steps, style=3)
@@ -14,8 +17,9 @@ er_progress_start <- function(total_steps, title = "ER pipeline"){
 }
 
 #' Progress bar (tick)
-#' @param p progress object from [er_progress_start]
-#' @param label optional label
+#' @param p Progress object returned by [er_progress_start()].
+#' @param label Optional character label printed beside the step counter.
+#' @return The updated progress object (invisibly).
 #' @export
 er_progress_tick <- function(p, label=NULL){
   if (!inherits(p, "er_progress")) return(invisible(NULL))
@@ -32,7 +36,8 @@ er_progress_tick <- function(p, label=NULL){
 }
 
 #' Progress bar (done)
-#' @param p progress object
+#' @param p Progress object returned by [er_progress_start()].
+#' @return `NULL` invisibly. Closes the text progress bar and prints elapsed time.
 #' @export
 er_progress_done <- function(p){
   if (!inherits(p, "er_progress")) return(invisible(NULL))
@@ -42,6 +47,3 @@ er_progress_done <- function(p){
               as.numeric(difftime(Sys.time(), p$t0, units="secs"))))
   invisible(NULL)
 }
-
-
-########################################
