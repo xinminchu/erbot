@@ -1,6 +1,6 @@
 Package: erbot
-Title: ERBOT: Entity Resolution Pipeline and Utilities
-Version: 0.1.1
+Title: ERBOT: A Unified Entity Resolution Pipeline
+Version: 0.2.0
 Authors@R: 
     c(person("Xinmin", "Chu", , "Xinmin.Chu001@umb.edu", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0001-5140-3852")),
@@ -12,7 +12,11 @@ Authors@R:
     person("Brian", "Crites", role = c("aut", "cph"),
       comment = "Author of included GraphColoring code")
     )
-Description: End-to-end entity resolution utilities and pipelines (TF-IDF+SVD, k-means, Louvain-kNN, MST/SN+edit, Graph Coloring via 'resolve_entities'), tuning helpers, reporting, and optional weighted-field CV search.
+Description: End-to-end entity resolution (deduplication and record linkage) via a
+    nine-stage pipeline: loading, field diagnosis, blocking, per-field NA-aware
+    similarity, adaptive weighted combination (Fellegi-Sunter or ARI weights),
+    multiple clustering methods (HC, PAM, Louvain, Leiden, Graph Coloring),
+    consensus merging, and evaluation by ARI and B-cubed F-score.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -45,4 +49,14 @@ Imports:
 Suggests:
     mclust,
     aricode,
-    GCMER
+    GCMER,
+    torch,
+    leidenbase,
+    RANN,
+    proxy,
+    RSpectra,
+    peakRAM,
+    dbscan,
+    textreuse
+Remotes:
+    ddegras/GCMER
