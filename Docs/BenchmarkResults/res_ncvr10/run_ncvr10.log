@@ -1,0 +1,75 @@
+- The project is out-of-sync -- use `renv::status()` for details.
+Warning message:
+replacing previous import 'dplyr::combine' by 'gridExtra::combine' when loading 'erbot' 
+[15:33:30] Loading NCVR 10-party data (10000 records/party)...
+[15:33:38]   Combined: 100000 records, 6 content columns
+[15:33:38]   Load time: 8.8 s
+[15:33:38] Building multi-party gold standard...
+[15:33:39]   98521 unique entities | 1448 appear in 2+ parties | 1512 true cross-party pairs
+[15:33:39] Running erbot pipeline...
+[15:33:39]   Methods : threshold_cc, louvain, label_prop
+[15:33:39]   Pair budget : 5,000,000
+[15:33:39]   Blocking : prefix-3 on surname
+[er_run] Stage 1: loading data...
+  n = 100000 records, 6 columns
+[er_run] Stage 2: diagnosing fields...
+  mode=link, blocking_needed=TRUE, recommended=standard on 'suburb'
+[er_run] Stage 3: blocking...
+  5,275,664 candidate pairs generated.
+[er_run] Stage 4: computing per-field similarities...
+  4 field(s) computed.
+[er_run] Stage 5: computing field weights...
+  weights: givenname=0.250, surname=0.250, suburb=0.250, postcode=0.250
+[er_run] Stage 6: combining similarities...
+  S: 100000 x 100000 sparse matrix, 10551328 non-zero entries.
+[er_run] Stage 7: clustering...
+  er_cluster_all: running threshold_cc
+  er_cluster_all: running louvain
+  er_cluster_all: running label_prop
+  3 method(s) ran.
+[er_run] Stage 8: merging / post-processing...
+  final: 82121 clusters.
+[er_run] Stage 9a: evaluating (supervised)...
+  predictions written to D:/ResearchHub/01_projects/erbot/results/res_ncvr10/10k/er_predictions.csv
+  performance table written to D:/ResearchHub/01_projects/erbot/results/res_ncvr10/10k/er_performance.csv
+[er_run] Done. Elapsed: 489.9s
+
+=== ERBOT result: n=100000, clusters=82121, elapsed=489.9s ===
+  Blocking: 5,275,664 pairs (RR=0.999)
+
+  Performance (primary metrics):
+# A tibble: 4 × 5
+  method         ARI Bcubed_F Homogeneity Completeness
+  <chr>        <dbl>    <dbl>       <dbl>        <dbl>
+1 threshold_cc    NA    0.900       0.951        0.999
+2 louvain         NA    0.769       0.835        0.999
+3 label_prop      NA    0.769       0.835        0.999
+4 final           NA    0.900       0.951        0.999
+Warning message:
+In .pairs_from_blocks(pfx, max_pairs) :
+  er_block: pair budget exceeded (5,862,011 > 5e+06). Truncating.
+
+=== NCVR10 Results ( 10000 records/party × 10 parties) ===
+# A tibble: 4 × 13
+  method     ARI   NMI    VI Bcubed_P Bcubed_R Bcubed_F Homogeneity Completeness
+  <chr>    <dbl> <dbl> <dbl>    <dbl>    <dbl>    <dbl>       <dbl>        <dbl>
+1 thresho…    NA    NA    NA    0.824    0.990    0.900       0.951        0.999
+2 louvain     NA    NA    NA    0.629    0.991    0.769       0.835        0.999
+3 label_p…    NA    NA    NA    0.629    0.991    0.769       0.835        0.999
+4 final       NA    NA    NA    0.824    0.990    0.900       0.951        0.999
+# ℹ 4 more variables: Vmeasure <dbl>, PairF_P <dbl>, PairF_R <dbl>,
+#   PairF_F <dbl>
+[15:41:49] Generating plots...
+Warning message:
+Removed 8 rows containing missing values or values outside the scale range
+(`geom_bar()`). 
+Warning message:
+Removed 12 rows containing missing values or values outside the scale range
+(`geom_text()`). 
+Warning messages:
+1: Removed 4 rows containing missing values or values outside the scale range
+(`geom_point()`). 
+2: Removed 4 rows containing missing values or values outside the scale range
+(`geom_text_repel()`). 
+[15:41:50] All plots saved.
+[15:41:50] Done. Results in: D:/ResearchHub/01_projects/erbot/results/res_ncvr10/10k

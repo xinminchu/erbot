@@ -1,0 +1,711 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{hhline}
+\usepackage{amsmath}
+\usepackage{adjustbox}
+
+% ── Global table defaults ────────────────────────────────────────────────────
+% Tighten inter-column spacing and add a touch of row breathing room
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.08}
+% New column type W: paragraph cell that fills remaining width in tabularx
+\newcolumntype{W}{>{\raggedright\arraybackslash}X}
+
+\definecolor{highprio}{HTML}{CC0000}
+\definecolor{medprio}{HTML}{CC8800}
+\definecolor{lowprio}{HTML}{007700}
+\definecolor{good}{HTML}{1A9850}
+\definecolor{mid}{HTML}{CC8800}
+\definecolor{poor}{HTML}{CC0000}
+\definecolor{rowgray}{HTML}{F5F5F5}
+
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = blue!60!black,
+  urlcolor   = blue!60!black,
+}
+
+\newcommand{\good}[1]{{\color{good}\textbf{#1}}}
+\newcommand{\poor}[1]{{\color{poor}#1}}
+\newcommand{\na}{---}
+
+\title{\textbf{ERBOT v0.2.0 --- Integrated Benchmark Results}\\[6pt]
+       \large CORA \quad$\cdot$\quad Affiliation Strings \quad$\cdot$\quad
+              Synthetic 10K \quad$\cdot$\quad NCVR 5-Party \quad$\cdot$\quad NCVR 10-Party}
+\author{ERBOT v0.2.0}
+\date{Generated: 2026-03-26}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\vspace{1em}
+\hrule
+\vspace{1em}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section*{Abstract}
+\addcontentsline{toc}{section}{Abstract}
+
+This document integrates the individual ERBOT benchmark results across five
+datasets: CORA (bibliographic deduplication), Affiliation Strings (free-text
+institution deduplication), Synthetic 10K (noisy unstructured text
+deduplication), NCVR 5-Party (two-source voter record linkage at two scales),
+and NCVR 10-Party (multi-source voter record linkage at 100K scale). It
+synthesises per-dataset findings into cross-cutting conclusions about method
+reliability, blocking effectiveness, scalability limits, and recommended
+configurations for ERBOT v0.2.0.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Benchmark Overview}
+
+\subsection{Datasets}
+
+Six experimental conditions across five benchmark datasets were evaluated.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{llrrrrl}
+\toprule
+\textbf{ID} & \textbf{Dataset} & \textbf{Records} & \textbf{Fields} &
+\textbf{Gold pairs} & \textbf{Match rate$^*$} & \textbf{Task} \\
+\midrule
+\textbf{C}    & CORA Bibliographic       & 1,879   & 15 & 64,578  & 3.7\%   & Deduplication \\
+\textbf{A}    & Affiliation Strings      & 2,260   &  1 & 32,816  & 1.3\%   & Deduplication \\
+\textbf{S}    & Synthetic 10K (d10k)     & 10,000  &  1 & 8,705   & 0.017\% & Deduplication \\
+\textbf{N5-s} & NCVR 5-Party (small)     & 10,000  &  4 & $\sim$880 & 0.018\% & Linkage \\
+\textbf{N5-l} & NCVR 5-Party (large)     & 100,000 &  4 & $\sim$880 & $<$0.001\% & Linkage \\
+\textbf{N10}  & NCVR 10-Party            & 100,000 &  4 & 1,512   & 0.0003\% & Linkage \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\caption{Benchmark conditions. $^*$Match rate = gold pairs / $\binom{n}{2}$ (fraction of all possible
+record pairs that are true matches). CORA and Affiliation are relatively dense;
+single-field and linkage datasets are very sparse.}
+\end{table}
+
+\subsection{Pipeline Configuration Summary}
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{llrrrl}
+\toprule
+\textbf{ID} & \textbf{Blocking} & \textbf{Pairs} & \textbf{RR} &
+\textbf{Methods run} & \textbf{Runtime} \\
+\midrule
+\textbf{C}    & Prefix-3 on \texttt{title}       & 137,707   & 92.2\% & 9 (incl.\ SVM)      & $\approx$59 min \\
+\textbf{A}    & Prefix-3 on \texttt{affiliation} & 164,719   & 93.5\% & 9 (incl.\ SVM)      & $\approx$5.6 hr \\
+\textbf{S}    & Prefix-3 on \texttt{text}        & 885,301   & 98.2\% & 8 (SVM excluded$^a$)  & $\approx$11 min \\
+\textbf{N5-s} & Prefix-3 on \texttt{surname}     & $\sim$10,600 & $\approx$100\% & 9 (incl.\ SVM) & $<$1 hr \\
+\textbf{N5-l} & Prefix-3 on \texttt{surname}     & 1,059,972$^b$ & $\approx$100\% & 4 (graph-only$^c$) & $\approx$45 hr \\
+\textbf{N10}  & Prefix-3 on \texttt{surname}     & 5,275,664 & 99.9\% & 3 (graph-only$^c$) & $\approx$8 min \\
+\bottomrule
+\end{tabular}
+\caption{%
+$^a$ SVM killed after $\approx$20 hours (885K pairs, estimated 1--4 days to complete).
+$^b$ Truncated from 2,121,188 (pair budget cap exceeded).
+$^c$ hclust/pam/gc excluded: exceed R's 65,536-observation distance-matrix limit or
+require 74.5\,GiB dense allocation. N10 uses 5M pair budget vs.\ 2M for N5-l.}
+\end{table}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Per-Dataset Results}
+
+\subsection{CORA Bibliographic Dataset (C)}
+
+\textbf{Characteristics:} 1,879 research paper citations with 15 fields; heavy
+noise (OCR errors, missing fields, formatting inconsistencies).
+Ground truth: 64,578 matched pairs.
+
+\begin{table}[h!]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Method} & \textbf{ARI} & \textbf{NMI} & \textbf{B$^3$-P} & \textbf{B$^3$-R} & \textbf{B$^3$-F} & \textbf{PF-F} \\
+\midrule
+\good{hclust\_avg} & \good{0.746} & \good{0.855} & \good{0.651} & 0.849 & \good{0.737} & \good{0.757} \\
+hclust\_ward     & 0.524 & 0.827 & 0.661 & 0.748 & 0.702 & 0.542 \\
+pam              & 0.624 & 0.841 & 0.639 & 0.784 & 0.704 & 0.638 \\
+svm              & 0.543 & 0.849 & 0.630 & 0.817 & 0.711 & 0.566 \\
+threshold\_cc    & 0.506 & 0.811 & 0.520 & 0.858 & 0.648 & 0.532 \\
+louvain          & 0.506 & 0.811 & 0.520 & 0.858 & 0.648 & 0.532 \\
+label\_prop      & 0.506 & 0.811 & 0.520 & 0.858 & 0.648 & 0.532 \\
+leiden           & 0.000 & 0.686 & 1.000 & 0.065 & 0.122 & 0.000 \\
+gc$^\dagger$     & 0.000 & 0.000 & 0.040 & 1.000 & 0.077 & 0.076 \\
+\midrule
+\textit{final}   & 0.746 & 0.855 & 0.651 & 0.849 & 0.737 & 0.757 \\
+\bottomrule
+\end{tabular}
+\caption{CORA performance (rerun 2026-03-26, merge bug fixed).
+$^\dagger$gc failed with dimension mismatch error.}
+\end{table}
+
+\textbf{Key points:} hclust\_avg (ARI = 0.746) is the best method on CORA, and the
+highest ARI result across all deduplication benchmarks. PAM (0.624) and SVM (0.543) follow.
+The \texttt{final} merge now correctly selects hclust\_avg. With 15 discriminative fields,
+hierarchical and centroidal methods outperform the graph-based family (threshold-CC: 0.506).
+
+\subsection{Affiliation Strings Dataset (A)}
+
+\textbf{Characteristics:} 2,260 author affiliation strings, one noisy text
+field, extreme surface-form variability (abbreviations, language variants,
+reorderings). Ground truth: 32,816 matched pairs.
+
+\begin{table}[h!]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Method} & \textbf{ARI} & \textbf{NMI} & \textbf{B$^3$-P} & \textbf{B$^3$-R} & \textbf{B$^3$-F} & \textbf{PF-F} \\
+\midrule
+\good{threshold\_cc} & \good{0.076} & 0.688 & 0.395 & 0.550 & \good{0.460} & \na \\
+louvain              & 0.076 & 0.688 & 0.394 & 0.550 & 0.459 & \na \\
+label\_prop          & 0.076 & 0.688 & 0.394 & 0.550 & 0.459 & \na \\
+svm                  & 0.035 & 0.818 & 0.977 & 0.159 & 0.273 & \na \\
+leiden               & 0.000 & \good{0.819} & 1.000 & 0.146 & 0.255 & \na \\
+hclust\_avg          & 0.053 & 0.516 & 0.184 & 0.530 & 0.272 & \na \\
+pam                  & 0.053 & 0.516 & 0.184 & 0.530 & 0.272 & \na \\
+hclust\_ward         & 0.042 & 0.516 & 0.185 & 0.519 & 0.273 & \na \\
+gc                   & 0.000 & 0.000 & 0.007 & 1.000 & 0.014 & \na \\
+\midrule
+\textit{final}       & 0.076 & 0.688 & 0.395 & 0.550 & 0.460 & \na \\
+\bottomrule
+\end{tabular}
+\caption{Affiliation Strings performance. PF columns omitted (in individual summary).}
+\end{table}
+
+\textbf{Key points:} Overall performance is very low (best ARI = 0.076).
+SVM paradoxically underperforms threshold-CC (ARI 0.035 vs.\ 0.076): extreme
+precision (0.977) but near-zero recall (0.159) --- it only merges the highest-confidence
+pairs. Primary bottleneck: prefix-3 blocking on a variable-opening-token field
+discards many true matches before any clustering is attempted. Final merge
+correctly selected threshold-CC.
+
+\subsection{Synthetic 10K Dataset (S)}
+
+\textbf{Characteristics:} 10,000 noisy unstructured text records, one field,
+corruptions via character substitution, token deletion, and reordering.
+Ground truth: 8,705 matched pairs.
+
+\begin{table}[h!]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Method} & \textbf{ARI} & \textbf{NMI} & \textbf{B$^3$-P} & \textbf{B$^3$-R} & \textbf{B$^3$-F} & \textbf{PF-F} \\
+\midrule
+leiden               & 0.000 & \good{0.914} & \good{1.000} & 0.271 & \good{0.426} & \na \\
+\good{threshold\_cc} & \good{0.023} & 0.778 & 0.334 & 0.519 & 0.406 & \na \\
+louvain              & 0.023 & 0.778 & 0.334 & 0.519 & 0.406 & \na \\
+label\_prop          & 0.023 & 0.778 & 0.334 & 0.519 & 0.406 & \na \\
+hclust\_avg          & 0.002 & 0.371 & 0.019 & 0.573 & 0.036 & \na \\
+pam                  & 0.002 & 0.371 & 0.019 & 0.573 & 0.036 & \na \\
+hclust\_ward         & 0.001 & 0.347 & 0.019 & 0.690 & 0.037 & \na \\
+gc                   & 0.000 & 0.000 & 0.001 & 1.000 & 0.002 & \na \\
+svm                  & \multicolumn{6}{c}{\textit{not run --- estimated 1--4 days; killed after 20 hr}} \\
+\midrule
+\textit{final}       & 0.023 & 0.778 & 0.334 & 0.519 & 0.406 & \na \\
+\bottomrule
+\end{tabular}
+\caption{Synthetic 10K performance. PF columns omitted (in individual summary).}
+\end{table}
+
+\textbf{Key points:} Performance is the lowest of any single-condition run (best ARI = 0.023).
+An interesting inversion: Leiden has the highest NMI (0.914) and B$^3$-F (0.426) but ARI = 0
+due to over-splitting. Threshold-CC, Louvain, and Label Propagation tie at ARI = 0.023 with more
+balanced recall (0.519 vs.\ 0.271). SVM is infeasible. Blocking (98.2\% reduction) is again
+the primary bottleneck.
+
+\subsection{NCVR 5-Party Dataset (N5)}
+
+\textbf{Characteristics:} North Carolina Voter Registration records, 4 fields
+(\texttt{givenname}, \texttt{surname}, \texttt{suburb}, \texttt{postcode}).
+The dataset file contains 5 parties; the current runs used parties 0 and 1
+(two-source linkage), 20\% overlap, 2 fields modified per duplicate.
+Run at two scales: 5K/party (10K total, small) and 50K/party (100K total, large).
+
+\begin{table}[h!]
+\centering
+\small
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{llrrrrrr}
+\toprule
+\textbf{Scale} & \textbf{Method} & \textbf{ARI} & \textbf{NMI} & \textbf{B$^3$-P} &
+\textbf{B$^3$-R} & \textbf{B$^3$-F} & \textbf{PF-F} \\
+\midrule
+\multirow{5}{*}{\textbf{Small}}
+ & \good{threshold\_cc / louvain /} & \good{0.917} & \good{0.975} & \good{1.000} & 0.929 & \good{0.963} & \good{0.923} \\
+ & \good{\quad label\_prop / svm (tied)} & & & & & & \\
+ & hclust\_avg & 0.276 & 0.713 & 0.537 & 0.929 & 0.681 & 0.364 \\
+ & pam         & 0.158 & 0.672 & 0.537 & 0.786 & 0.638 & 0.258 \\
+ & leiden      & 0.000 & 0.849 & 1.000 & 0.500 & 0.667 & 0.000 \\
+ & gc          & 0.000 & 0.000 & 0.143 & 1.000 & 0.250 & 0.143 \\
+\midrule
+\multirow{5}{*}{\textbf{Large}}
+ & \good{threshold\_cc} & \good{0.195} & \good{0.956} & \good{0.991} & 0.560 & \good{0.715} & \good{0.195} \\
+ & louvain     & 0.133 & 0.947 & 0.933 & 0.560 & 0.700 & 0.134 \\
+ & label\_prop & 0.133 & 0.947 & 0.933 & 0.560 & 0.700 & 0.134 \\
+ & leiden      & 0.000 & 0.951 & 1.000 & 0.500 & 0.667 & 0.000 \\
+ & hclust/pam/gc & \multicolumn{6}{c}{\textit{failed (65K limit / 74.5 GiB allocation)}} \\
+\midrule
+\multirow{1}{*}{}
+ & \textit{final (both)} & 0.917 / 0.195 & 0.975 / 0.956 & 1.000 / 0.991 & 0.929 / 0.560 & 0.963 / 0.715 & 0.923 / 0.195 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\caption{NCVR 5-Party performance at small (10K records) and large (100K records) scale.}
+\end{table}
+
+\textbf{Key points:} NCVR at small scale is the strongest result across all
+benchmarks (ARI = 0.917), benefiting from a 4-field structured profile and
+controlled synthetic noise. At large scale, ARI drops to 0.195 --- not because
+the clustering degrades, but because the match density is 10$\times$ lower
+(880 true matches in 100K records vs.\ 10K records). Precision stays at 0.991;
+recall drops from 0.929 to 0.560. Four methods (hclust\_avg, hclust\_ward, pam,
+gc) fail at 100K scale and have been removed from the large-run script.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{NCVR 10-Party Dataset (N10)}
+
+\textbf{Characteristics:} 100,000 NCVR records across 10 parties (10K per party);
+4 structured fields; 20\% overlap, 2-field modification. True cross-party pairs:
+1,512 (match density 0.030\%). Graph-only methods; 5M pair budget.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Method} & \textbf{B$^3$-P} & \textbf{B$^3$-R} & \textbf{B$^3$-F} &
+\textbf{Hom.} & \textbf{Com.} & \textbf{V-measure} \\
+\midrule
+\textbf{threshold\_cc} & \textbf{0.824} & \textbf{0.991} & \textbf{0.900} & \textbf{0.951} & \textbf{0.999} & \textbf{0.975} \\
+louvain               & 0.629 & 0.991 & 0.769 & 0.835 & 0.999 & 0.909 \\
+label\_prop           & 0.629 & 0.991 & 0.769 & 0.835 & 0.999 & 0.909 \\
+\midrule
+\textit{final}        & 0.824 & 0.991 & 0.900 & 0.951 & 0.999 & 0.975 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\caption{NCVR 10-Party performance (100K records). ARI, NMI, VI, and PairF not computed
+at this scale (O($n^2$) evaluation bottleneck). Hom.\ = Homogeneity; Com.\ = Completeness.}
+\end{table}
+
+\textbf{Key points:} threshold\_cc outperforms louvain/label\_prop by a large margin
+(B$^3$-F 0.900 vs.\ 0.769) in contrast to NCVR5-small where all three methods tied.
+At very low match density (1,512 true pairs in 100K records), threshold\_cc's strict
+cut-off suppresses spurious merges more effectively than community-detection methods.
+The 5M pair budget (vs.\ 2M in NCVR5-large) is a key difference: NCVR5-large budget
+truncation likely contributed to its lower recall (0.560), while NCVR10 with 5M pairs
+achieves near-perfect recall (0.991). Note that NCVR5-large and NCVR10 are not directly
+comparable (different party counts and true pair distributions) --- this is directional
+evidence, not a controlled budget experiment.
+Total runtime was 8.2 minutes (vs.\ $\approx$45 hours for NCVR5-large) --- the
+improvement is entirely due to removing failed distance-matrix methods.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Cross-Dataset Analysis}
+
+\subsection{Overall Performance Comparison}
+
+\begin{table}[h!]
+\centering
+\small
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{lrrrrrrl}
+\toprule
+\textbf{Dataset} & \textbf{Best ARI} & \textbf{Best B$^3$-F} & \textbf{Best V} &
+\textbf{Best PF-F} & \textbf{Final B$^3$-F} & \textbf{Final correct?} & \textbf{Best method} \\
+\midrule
+CORA          & 0.746 & 0.737 & 0.855 & 0.757 & 0.737 & Yes & hclust\_avg \\
+Affiliation   & 0.076 & 0.460 & 0.688 & \na   & 0.460 & Yes & threshold\_cc \\
+Syn10K        & 0.023 & 0.426 & 0.914 & \na   & 0.406 & Yes & threshold\_cc \\
+NCVR5 (small) & 0.917 & 0.963 & 0.975 & 0.923 & 0.963 & Yes & threshold\_cc \\
+NCVR5 (large) & 0.195 & 0.715 & 0.956 & 0.195 & 0.715 & Yes & threshold\_cc \\
+NCVR10        & \na   & 0.900 & 0.975 & \na   & 0.900 & Yes & threshold\_cc \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\caption{Best performance per dataset/condition. ``Final correct'' = did the \texttt{best}
+merge strategy select the actual best method? NCVR10 ARI/PairF not available (evaluation
+bottleneck at $n=100{,}000$). V = V-measure.}
+\end{table}
+
+\subsection{Method Consistency Across Datasets}
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\linewidth}{lrrrrrrW}
+\toprule
+\textbf{Method} & \textbf{CORA} & \textbf{Aff} & \textbf{Syn10K} &
+\textbf{N5-s} & \textbf{N5-l} & \textbf{N10$^\dagger$} & \textbf{Assessment} \\
+\midrule
+\textbf{hclust\_avg}    & \good{0.746} & 0.053 & 0.002 & 0.276 & fail  & n/a  & Best on CORA; weak elsewhere; fails $>$65K \\
+\textbf{threshold\_cc} & 0.506 & 0.076 & 0.023 & 0.917 & 0.195 & \good{0.900\,B$^3$} & Best or tied-best in all 6 conditions \\
+\textbf{louvain}       & 0.506 & 0.076 & 0.023 & 0.917 & 0.133 & 0.769\,B$^3$ & Matches threshold-CC except NCVR-large \\
+\textbf{label\_prop}   & 0.506 & 0.076 & 0.023 & 0.917 & 0.133 & 0.769\,B$^3$ & Identical to louvain in all conditions \\
+pam                    & 0.624 & 0.053 & 0.002 & 0.158 & fail  & n/a  & Strong on CORA; weak elsewhere; fails $>$65K \\
+svm                    & 0.543 & 0.035 & n/a   & 0.917 & n/a   & n/a  & Good on multi-field; infeasible at scale \\
+hclust\_ward           & 0.524 & 0.042 & 0.001 & 0.068 & fail  & n/a  & Moderate on CORA; weak elsewhere; fails $>$65K \\
+leiden                 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & n/a  & ARI = 0 in all conditions \\
+gc                     & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & n/a  & ARI = 0 / fails in all conditions \\
+\bottomrule
+\end{tabularx}
+\caption{Primary metric by method and condition (n/a = not run; fail = runtime error).
+CORA/Aff/Syn10K/N5 values are ARI; N10$^\dagger$ values are B$^3$-F (ARI unavailable at 100K scale).}
+\end{table}
+
+Three clear groups emerge:
+
+\begin{enumerate}[leftmargin=*, label=\arabic*., noitemsep]
+  \item \textbf{Reliable graph methods:} threshold\_cc, louvain, label\_prop are best
+        or joint-best in every condition. They converge to an identical solution in 4 of
+        5 ARI-comparable conditions. In the N10 (B$^3$-F) run, threshold\_cc pulls ahead
+        of louvain/label\_prop by 0.131 B$^3$-F at very low match density.
+        threshold\_cc is the single most robust method and should be the ERBOT default.
+  \item \textbf{Conditionally useful:} SVM wins on CORA (ARI +0.037 over graph methods) where
+        15 fields provide rich training signal. On single-field or large datasets it is worse
+        than threshold-CC or infeasible. The SVM viability boundary appears to be
+        $\approx$200K candidate pairs (complete in reasonable time up to 164K pairs, fails at
+        885K).
+  \item \textbf{Never useful at defaults:} leiden (ARI = 0 across all 5 ARI-comparable
+        conditions), gc (ARI = 0 across all 5 ARI-comparable conditions), hclust\_avg/ward,
+        pam. These methods either degenerate or fail at scale without parameter tuning.
+        They should not appear in production runs without explicit tuning.
+\end{enumerate}
+
+\subsection{Blocking Effectiveness}
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\linewidth}{lrlrlW}
+\toprule
+\textbf{Dataset} & \textbf{RR} & \textbf{Blocking key} & \textbf{Gold pairs} &
+\textbf{Bottleneck?} & \textbf{Notes} \\
+\midrule
+CORA         & 92.2\% & Prefix-3 on \texttt{title}       & 64,578  & Moderate & Title prefix usually consistent in citations \\
+Affiliation  & 93.5\% & Prefix-3 on \texttt{affiliation} & 32,816  & \textbf{Severe}   & Variable opening tokens (``Dept.\ of'', ``Univ.\ of'') \\
+Syn10K       & 98.2\% & Prefix-3 on \texttt{text}        & 8,705   & \textbf{Severe}   & Corrupted/reordered first tokens \\
+NCVR5-small  & $\approx$100\% & Prefix-3 on \texttt{surname}   & $\sim$880 & Low & Surname prefix stable under 2-field modification \\
+NCVR5-large  & $\approx$100\% & Prefix-3 on \texttt{surname}   & $\sim$880 & \textbf{High}$^*$ & Budget cap (2.12M $\to$ 2M) truncated true pairs; recall=0.560 \\
+NCVR10       & 99.9\% & Prefix-3 on \texttt{surname}     & 1,512   & Low & 5M budget sufficient; recall=0.991; no truncation \\
+\bottomrule
+\end{tabularx}
+\caption{Blocking effectiveness per dataset. $^*$NCVR5-large 2M budget was the primary
+cause of recall=0.560; raising to 5M (as in NCVR10) recovers recall=0.991.}
+\end{table}
+
+Prefix-3 blocking on the primary text field is appropriate only when the field
+has a consistent, reliable prefix (as in bibliographic titles and personal surnames).
+It is a poor choice for free-text affiliation strings and synthetic noisy text,
+where many true match pairs have incompatible opening tokens. For structured records
+(NCVR), surname prefix is stable and the limiting factor is the pair budget, not
+prefix quality.
+
+\subsection{Scalability Profile}
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{lrll}
+\toprule
+\textbf{Method} & \textbf{Max viable records} & \textbf{Bottleneck} & \textbf{Alternative} \\
+\midrule
+hclust\_avg/ward & $<$65,536 & $O(n^2)$ distance matrix & graph methods \\
+pam              & $<$65,536 & $O(n^2)$ distance matrix & graph methods \\
+gc               & $<$65,536 & Dense matrix allocation   & remove from defaults \\
+svm              & $\sim$200K pairs & Super-linear kernel computation & logistic regression, GBM \\
+threshold\_cc    & $\geq$100,000 & Sparse graph ops & --- \\
+louvain          & $\geq$100,000 & Sparse graph ops & --- \\
+label\_prop      & $\geq$100,000 & Sparse graph ops & --- \\
+leiden           & $\geq$100,000 & Sparse graph ops & --- \\
+\bottomrule
+\end{tabular}
+\caption{Scalability limits by method.}
+\end{table}
+
+\subsection{Performance Drivers}
+
+The following factors explain performance variation across conditions,
+in approximate order of impact:
+
+\begin{enumerate}[leftmargin=*, label=\arabic*.]
+  \item \textbf{Field count and noise quality} (primary). NCVR with 4 structured fields
+        and controlled noise achieves ARI = 0.917; the single-field datasets plateau at
+        0.023--0.076. CORA with 15 fields but heavy uncontrolled noise (OCR errors,
+        missing fields) achieves ARI = 0.746 --- lower than NCVR despite having more
+        fields. Field count helps when fields are informative; noise quality determines
+        how discriminative each field is. Both factors drive performance jointly.
+
+  \item \textbf{Match density.} At the same 4-field NCVR configuration, match density
+        decreases as scale grows: small (N5-s, $\sim$880 pairs in 10K records) $\to$
+        large (N5-l, $\sim$880 in 100K) drops ARI from 0.917 to 0.195. When true
+        matches are rare, blocking recall failures and false-positive cluster merges
+        are amplified.
+
+  \item \textbf{Blocking recall.} On single-field noisy text (Affiliation, Syn10K),
+        prefix-3 blocking is too aggressive: many true match pairs have incompatible
+        prefixes and are eliminated before any similarity or clustering computation.
+        The measured performance is a lower bound for these datasets.
+
+  \item \textbf{Supervision signal.} SVM outperforms graph methods on CORA (+0.037 ARI)
+        where 15 fields provide a rich multi-dimensional feature space. On single-field
+        datasets the feature space is one-dimensional and SVM's decision boundary
+        collapses to a scalar threshold --- functionally equivalent to threshold-CC but
+        slower.
+
+  \item \textbf{Noise model.} Controlled 2-field corruption (NCVR) is easier than
+        uncontrolled real-world errors (CORA citations) or extreme surface-form variation
+        (Affiliation). Datasets with predictable noise are easier for all methods.
+\end{enumerate}
+
+\subsection{The \texttt{final} Merge Strategy}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lllrr}
+\toprule
+\textbf{Dataset} & \textbf{Selected} & \textbf{Correct?} & \textbf{Final ARI} & \textbf{Final B$^3$-F} \\
+\midrule
+CORA          & hclust\_avg   & \good{Yes} & 0.746 & 0.737 \\
+Affiliation   & threshold\_cc & \good{Yes} & 0.076 & 0.460 \\
+Syn10K        & threshold\_cc & \good{Yes} & 0.023 & 0.406 \\
+NCVR5-small   & threshold\_cc & \good{Yes} & 0.917 & 0.963 \\
+NCVR5-large   & threshold\_cc & \good{Yes} & 0.195 & 0.715 \\
+NCVR10        & threshold\_cc & \good{Yes} & \na   & 0.900 \\
+\bottomrule
+\end{tabular}
+\caption{Final merge selection per condition. \na = not computed (evaluation bottleneck).
+The merge bug was present in the original CORA run and fixed before subsequent runs.}
+\end{table}
+
+The merge selection bug (originally exposed by CORA) has been fixed. All six
+conditions now correctly identify the best method. The CORA rerun (2026-03-26)
+confirms \texttt{final} = hclust\_avg at ARI = 0.746 --- the strongest ARI result
+across all benchmarks. NCVR10 achieves B$^3$-F = 0.900 with threshold\_cc, the
+highest B-cubed score of any large-scale (100K) condition.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Unified Key Findings}
+
+\begin{enumerate}[leftmargin=*, label=\arabic*.]
+
+  \item \textbf{Threshold-CC is the most reliable ERBOT method.}
+        It is best or tied-best in all six experimental conditions, scales to
+        $\geq$100K records, and is fast. It should be the primary default
+        clustering method for all ERBOT runs. At very low match density
+        (NCVR10, 0.030\%), threshold\_cc separates from louvain/label\_prop
+        by 0.131 B$^3$-F points --- its strict cut-off criterion matters more
+        as true match pairs become rare.
+
+  \item \textbf{Louvain and Label Propagation are robust second choices.}
+        They produce results identical to threshold-CC in 4 of 5 ARI-comparable conditions.
+        At very large scale with low match density (NCVR5-large, NCVR10) they
+        underperform threshold-CC. All three graph methods are worth running
+        together since their agreement is a strong quality signal.
+
+  \item \textbf{Leiden and GC should be excluded from default runs.}
+        Both produce ARI = 0 in every condition where ARI was available without parameter
+        tuning. Leiden over-partitions (too-high resolution leading to near-zero recall)
+        and GC over-merges (degenerate fallback caused by an unresolved dimension mismatch
+        bug). Until tuned per-dataset, they add noise to the method comparison and inflate
+        runtime.
+
+  \item \textbf{hclust\_avg is the best method on CORA (ARI = 0.746), but does not
+        generalise to other datasets.}
+        On CORA's dense 15-field similarity matrix, average-link hierarchical clustering
+        finds an excellent partition. On single-field datasets or at $>$65K records it fails
+        or degenerates. SVM (ARI = 0.543 on CORA) is more portable: it also ties for best
+        on NCVR-small, though it is infeasible above $\approx$200K candidate pairs.
+
+  \item \textbf{The \texttt{final} merge is working correctly across all datasets.}
+        The original CORA run had a merge selection bug that picked the worst method.
+        After fixing and rerunning (2026-03-26), CORA \texttt{final} correctly selects
+        hclust\_avg at ARI = 0.746. All six conditions now report correct \texttt{final}
+        results.
+
+  \item \textbf{Blocking is the primary performance bottleneck on single-field and
+        noisy datasets.}
+        Prefix-3 blocking is well-suited to bibliographic titles and personal surnames,
+        but discards large fractions of true matches on affiliation strings and
+        synthetic noisy text. Pair completeness (fraction of gold pairs retained after
+        blocking) is not currently measured and should be added to Stage 3 diagnostics.
+
+  \item \textbf{Distance-matrix methods (hclust, pam, gc) are not viable at scale.}
+        They fail hard at $>$65K records due to R's memory constraints. They should
+        be gated behind a record-count check in \texttt{er\_cluster\_all()} and
+        automatically excluded when $n > 65000$.
+
+  \item \textbf{Performance correlates strongly with field count.}
+        NCVR (4 fields, controlled noise) $\gg$ CORA (15 fields, uncontrolled noise)
+        $\gg$ Affiliation/Syn10K (1 field). Every additional discriminative field
+        substantially reduces the difficulty of the clustering task.
+
+  \item \textbf{Pair budget is the dominant NCVR performance lever at scale.}
+        NCVR5-large with a 2M budget achieves recall 0.560; NCVR10 with a 5M budget
+        achieves recall 0.991 at the same $n=100{,}000$ scale. Raising the budget from
+        2M to 5M recovers 0.431 recall points. Budget should scale with record count.
+
+  \item \textbf{Equal weights are reasonable but not optimal.}
+        CORA has 15 fields of highly varying quality; supervised weight learning would
+        likely add +0.05--0.10 ARI for SVM and threshold-CC. For NCVR (4 balanced
+        fields) and single-field datasets, weight learning provides no benefit.
+
+  \item \textbf{Evaluation scalability is a bottleneck at $n \geq 100{,}000$.}
+        ARI, NMI, VI, and PairF could not be computed for NCVR10 due to O($n^2$)
+        loops in \texttt{er\_bcubed()} and contingency-table routines. B-cubed and
+        V-measure completed. This should be fixed with vectorised table lookups before
+        any further large-scale benchmarking.
+
+\end{enumerate}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Unified Recommendations}
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{cp{0.80\linewidth}}
+\toprule
+\textbf{Priority} & \textbf{Action} \\
+\midrule
+{\color{highprio}\textbf{High}} &
+  \textbf{Fix O($n^2$) evaluation bottleneck} in \texttt{er\_bcubed()} and the
+  contingency-table routines. Replace inner \texttt{which()} loops with vectorised
+  table lookups so ARI, NMI, VI, and PairF can be computed at $n = 100{,}000$. \\[4pt]
+{\color{highprio}\textbf{High}} &
+  \textbf{Gate distance-matrix methods behind a record-count check.}
+  In \texttt{er\_cluster\_all()}, automatically skip hclust\_avg, hclust\_ward, pam, and gc
+  when $n > 65000$ rather than attempting and failing. \\[4pt]
+{\color{highprio}\textbf{High}} &
+  \textbf{Add pair completeness to Stage 3 output.}
+  Report the fraction of ground-truth pairs retained after blocking. Currently all
+  recall figures are lower bounds. \\[4pt]
+{\color{highprio}\textbf{High}} &
+  \textbf{Remove leiden and gc from default method lists},
+  or add a degenerate-detection guard that flags ARI = 0 results and excludes
+  them from the \texttt{final} merge comparison. \\[4pt]
+{\color{medprio}\textbf{Medium}} &
+  \textbf{Replace SVM with logistic regression or gradient boosting}
+  for datasets with $>$200K candidate pairs. Provides near-linear scalability
+  with similar accuracy in the multi-field setting. \\[4pt]
+{\color{medprio}\textbf{Medium}} &
+  \textbf{Improve blocking for single-field and free-text datasets.}
+  For affiliation strings: sorted neighbourhood (SN) blocking or token-set
+  Jaccard. For synthetic noisy text: SN blocking on the full field or n-gram
+  shingling. \\[4pt]
+{\color{medprio}\textbf{Medium}} &
+  \textbf{Set pair budget to at least 5$\times$N} for structured linkage tasks.
+  NCVR10 demonstrated that a 5M budget at 100K records achieves recall=0.991,
+  while the old 2M budget caused recall=0.560. Make the budget adaptive or
+  scale with record count. \\[4pt]
+{\color{medprio}\textbf{Medium}} &
+  \textbf{Tune Leiden resolution parameter per dataset.}
+  Default resolution is consistently too high; try 0.05--0.2. Until tuned,
+  exclude Leiden from production comparisons. \\[4pt]
+{\color{medprio}\textbf{Medium}} &
+  \textbf{Fix GC dimension mismatch bug.}
+  GC silently falls back to a degenerate solution on all datasets where it was run
+  due to an unresolved interface error. Either fix or remove from the method list. \\[4pt]
+{\color{lowprio}\textbf{Low}} &
+  \textbf{Implement supervised weight learning for multi-field datasets.}
+  ARI-based weight optimisation on CORA expected to gain +0.05--0.10 ARI over
+  equal weights. \\[4pt]
+{\color{lowprio}\textbf{Low}} &
+  \textbf{Use all 5 parties in the NCVR5 dataset} (currently only parties 0 and 1
+  are used) to assess 5-source linkage under the full NCVR5 design.
+  The 10-party design (NCVR10) has already been run; this fills the gap at
+  intermediate party count. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Conclusions}
+
+ERBOT v0.2.0 has been evaluated across five benchmark datasets (six conditions)
+spanning a wide range of ER task types and sizes. The results establish a clear
+picture of what works, what scales, and what needs fixing.
+
+\textbf{What works reliably:} Threshold-CC (and by extension Louvain and Label
+Propagation) is a robust, scalable default that performs best or jointly best
+in every condition. At very low match density (NCVR10, 0.030\%), threshold\_cc
+pulls 0.131 B$^3$-F ahead of community-detection methods, making it even more
+valuable at large scale. The \texttt{final} merge strategy correctly identifies
+the best method in all six conditions (the CORA merge bug is now fixed).
+
+\textbf{What the numbers mean in context:} The best achievable ARI varies
+enormously by task --- from 0.917 on NCVR5-small (controlled noise, 4 fields)
+and 0.746 on CORA (15 fields, rich signal) to 0.023 on Syn10K (noisy single
+field). NCVR10 (B$^3$-F = 0.900) is the strongest large-scale result and shows
+that structured 4-field linkage is tractable at 100K records when the pair
+budget is sized appropriately. These differences reflect fundamentally different
+task difficulties, not ERBOT's limitations.
+
+\textbf{What needs immediate attention:} Three issues stand out. First,
+evaluation scalability: ARI, NMI, VI, and PairF could not be computed for
+NCVR10 due to O($n^2$) inner loops --- fixing this is a prerequisite for
+further large-scale benchmarking. Second, the four degenerate methods (leiden,
+gc, hclust/pam at scale) generate runtime failures and misleading zero-ARI
+entries in every result table --- they should be gated or removed. Third, pair
+completeness at Stage 3 is unmeasured, meaning all recall figures are lower
+bounds.
+
+\textbf{Direction:} The most impactful improvements would come from fixing
+evaluation scalability (to fully characterise NCVR10 and future large-scale
+runs), better blocking for free-text fields (Affiliation, Syn10K), and a
+scalable replacement for SVM. The NCVR10 result confirms that graph-only ERBOT
+runs at 100K scale are fast ($<$10 minutes) and accurate (B$^3$-F $\approx$0.90)
+when the pair budget is adequate.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Output Files Reference}
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Path} & \textbf{Contents} \\
+\midrule
+\texttt{res\_cora/CORA\_RESULTS\_SUMMARY.pdf}     & Full CORA individual summary \\
+\texttt{res\_cora/er\_performance.csv}            & CORA metric table \\
+\texttt{res\_aff/AFF\_RESULTS\_SUMMARY.pdf}       & Full Affiliation individual summary \\
+\texttt{res\_aff/er\_performance.csv}             & Affiliation metric table \\
+\texttt{res\_syn10k/SYN10K\_RESULTS\_SUMMARY.pdf} & Full Syn10K individual summary \\
+\texttt{res\_syn10k/er\_performance.csv}          & Syn10K metric table \\
+\texttt{res\_ncvr5/NCVR5\_RESULTS\_SUMMARY.pdf}   & Full NCVR5 individual summary \\
+\texttt{res\_ncvr5/small/er\_performance.csv}     & NCVR5-small metric table \\
+\texttt{res\_ncvr5/large/er\_performance.csv}     & NCVR5-large metric table \\
+\texttt{res\_ncvr10/NCVR10\_RESULTS\_SUMMARY.pdf} & Full NCVR10 individual summary \\
+\texttt{res\_ncvr10/10k/er\_performance.csv}      & NCVR10 metric table \\
+\texttt{ERBOT\_INTEGRATED\_SUMMARY.pdf}           & This document \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}

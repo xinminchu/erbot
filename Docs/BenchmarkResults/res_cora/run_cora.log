@@ -1,0 +1,77 @@
+- The project is out-of-sync -- use `renv::status()` for details.
+Warning message:
+replacing previous import 'dplyr::combine' by 'gridExtra::combine' when loading 'erbot' 
+Loading CORA gold standard...
+  Gold pairs: 64578 
+Running erbot pipeline on CORA...
+[er_run] Stage 1: loading data...
+  n = 1879 records, 16 columns
+[er_run] Stage 2: diagnosing fields...
+  mode=dedup, blocking_needed=TRUE, recommended=sn on 'title'
+[er_run] Stage 3: blocking...
+  137,707 candidate pairs generated.
+[er_run] Stage 4: computing per-field similarities...
+  15 field(s) computed.
+[er_run] Stage 5: computing field weights...
+  weights: title=0.067, booktitle=0.067, authors=0.067, address=0.067, date=0.067, year=0.067, editor=0.067, journal=0.067, volume=0.067, pages=0.067, publisher=0.067, institution=0.067, type=0.067, tech=0.067, note=0.067
+[er_run] Stage 6: combining similarities...
+  S: 1879 x 1879 sparse matrix, 275414 non-zero entries.
+[er_run] Stage 7: clustering...
+  er_cluster_all: running hclust_avg
+  er_cluster_all: running hclust_ward
+  er_cluster_all: running pam
+  er_cluster_all: running threshold_cc
+  er_cluster_all: running louvain
+  er_cluster_all: running leiden
+  er_cluster_all: running label_prop
+  er_cluster_all: running gc
+  er_cluster_all: gc failed: Argument 'D' does not match the number of elementsof the lower triangular part of a matrix(not of the form n * (n-1) / 2).
+  er_cluster_all: running svm
+  9 method(s) ran.
+[er_run] Stage 8: merging / post-processing...
+  final: 50 clusters.
+[er_run] Stage 9a: evaluating (supervised)...
+  predictions written to D:/ResearchHub/01_projects/erbot/results/res_cora/er_predictions.csv
+  performance table written to D:/ResearchHub/01_projects/erbot/results/res_cora/er_performance.csv
+[er_run] Done. Elapsed: 3255.9s
+
+=== ERBOT result: n=1879, clusters=50, elapsed=3255.9s ===
+  Blocking: 137,707 pairs (RR=0.922)
+
+  Performance (primary metrics):
+# A tibble: 10 × 5
+   method         ARI Bcubed_F Homogeneity Completeness
+   <chr>        <dbl>    <dbl>       <dbl>        <dbl>
+ 1 hclust_avg   0.746   0.737        0.804        0.912
+ 2 hclust_ward  0.524   0.702        0.794        0.862
+ 3 pam          0.624   0.704        0.801        0.884
+ 4 threshold_cc 0.506   0.648        0.733        0.909
+ 5 louvain      0.506   0.648        0.733        0.909
+ 6 leiden       0       0.122        1            0.522
+ 7 label_prop   0.506   0.648        0.733        0.909
+ 8 gc           0       0.0765       0            1    
+ 9 svm          0.543   0.711        0.809        0.893
+10 final        0.746   0.737        0.804        0.912
+
+=== CORA Results ===
+# A tibble: 10 × 13
+   method    ARI   NMI    VI Bcubed_P Bcubed_R Bcubed_F Homogeneity Completeness
+   <chr>   <dbl> <dbl> <dbl>    <dbl>    <dbl>    <dbl>       <dbl>        <dbl>
+ 1 hclust… 0.746 0.855  1.54   0.651     0.849   0.737        0.804        0.912
+ 2 hclust… 0.524 0.827  1.88   0.661     0.748   0.702        0.794        0.862
+ 3 pam     0.624 0.840  1.72   0.639     0.784   0.704        0.801        0.884
+ 4 thresh… 0.506 0.811  1.92   0.520     0.858   0.648        0.733        0.909
+ 5 louvain 0.506 0.811  1.92   0.520     0.858   0.648        0.733        0.909
+ 6 leiden  0     0.686  5.18   1         0.065   0.122        1            0.522
+ 7 label_… 0.506 0.811  1.92   0.520     0.858   0.648        0.733        0.909
+ 8 gc      0     0      5.65   0.0398    1       0.0765       0            1    
+ 9 svm     0.543 0.849  1.62   0.630     0.817   0.711        0.809        0.893
+10 final   0.746 0.855  1.54   0.651     0.849   0.737        0.804        0.912
+# ℹ 4 more variables: Vmeasure <dbl>, PairF_P <dbl>, PairF_R <dbl>,
+#   PairF_F <dbl>
+  Saved: plot_method_comparison.pdf
+  Saved: plot_performance_heatmap.pdf
+  Saved: plot_cluster_sizes.pdf
+  Saved: plot_precision_recall.pdf
+
+Done. Results saved to: D:/ResearchHub/01_projects/erbot/results/res_cora 

@@ -1,0 +1,383 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+
+% Colour definitions for priority levels
+\definecolor{highprio}{HTML}{CC0000}
+\definecolor{medprio}{HTML}{CC8800}
+\definecolor{lowprio}{HTML}{007700}
+
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = blue!60!black,
+  urlcolor   = blue!60!black,
+}
+
+\title{\textbf{ERBOT Results Summary}\\[4pt]
+       \large NCVR 5-Party Voter Registration Dataset}
+\author{ERBOT v0.2.0}
+\date{Generated: 2026-03-25 \quad|\quad Small run: $<$1 hr \quad|\quad Large run: $\approx$45 hrs}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\vspace{1em}
+\hrule
+\vspace{1em}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Dataset Overview}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Property} & \textbf{Value} \\
+\midrule
+Dataset      & NCVR 5-Party Voter Registration (ocp=20, modrec=2) \\
+Source files & \texttt{ncvr\_numrec\_1000000\_modrec\_2\_ocp\_20\_myp\_\{0,1\}\_nump\_5.csv} \\
+Parties used & 2 (party 0 and party 1 from the 5-party collection) \\
+Fields       & 4 content fields: \texttt{givenname}, \texttt{surname}, \texttt{suburb}, \texttt{postcode} \\
+Task         & Record linkage (two-source) \\
+Overlap rate & 20\% (\texttt{ocp=20}); modification rate: 2 fields per duplicate (\texttt{modrec=2}) \\
+True matches & $\approx$880 cross-party pairs (varies slightly by sample) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The NCVR 5-Party benchmark is derived from the North Carolina Voter Registration
+database. The generator produces $N$ records per party with a controlled overlap
+percentage and modification rate. Records that appear in both parties share the
+same \texttt{recid} but may differ in up to \texttt{modrec} fields. This benchmark
+tests cross-party record linkage under realistic personal-name and address noise.
+Two runs were conducted: a \textbf{small run} (5K records per party) and a
+\textbf{large run} (50K records per party) to assess scalability.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Pipeline Configuration}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{llll}
+\toprule
+\textbf{Stage} & \textbf{Setting} & \textbf{Small (5K/party)} & \textbf{Large (50K/party)} \\
+\midrule
+Input       & Records total       & 10,000      & 100,000 \\
+Input       & True matches        & $\approx$880 & $\approx$880 \\
+Input       & Match density       & $\sim$8.8\% & $\sim$0.88\% \\
+Blocking    & Method              & Prefix-3 on \texttt{surname} & Prefix-3 on \texttt{surname} \\
+Blocking    & Candidate pairs     & $\sim$10,600 (est.) & 1,059,972 (truncated from 2,121,188) \\
+Blocking    & Reduction ratio     & $\approx$1.000 & 1.000 \\
+Similarity  & Fields computed     & 4 & 4 \\
+Weights     & Method              & Equal (0.25 each) & Equal (0.25 each) \\
+Clustering  & Methods run         & All 9 (incl.\ SVM) & 8 (SVM excluded; hclust/pam/gc failed) \\
+Merge       & Strategy            & Best & Best \\
+Final       & Clusters            & 1,910 & 94,706 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Blocking note:} Prefix-3 on \texttt{surname} achieves near-total pair
+reduction (RR $\approx$ 1.000 due to rounding at this scale). In the large run
+the blocker generated 2,121,188 raw pairs which exceeded the 2M pair budget and
+was truncated to approximately 2M; the final sparse matrix has 2,119,944
+non-zero entries. This truncation may silently drop true match pairs and
+directly suppresses recall.
+
+\textbf{Match density note:} Both runs target the same absolute number of true
+matches ($\approx$880) because the ground truth is defined by recid overlap in
+the sampled subsets. The large run has 10$\times$ more records but the same
+matches, giving a 10$\times$ lower match density (0.88\% vs.\ 8.8\%). This
+is the primary driver of the performance gap between small and large runs.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Performance Results --- Small Run (5\,000 records/party)}
+
+\begin{table}[h!]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrrrrrrrr}
+\toprule
+\textbf{Method} & \textbf{ARI} & \textbf{NMI} & \textbf{VI} &
+\textbf{B$^3$-P} & \textbf{B$^3$-R} & \textbf{B$^3$-F} &
+\textbf{Hom.} & \textbf{Com.} & \textbf{V} &
+\textbf{PF-P} & \textbf{PF-R} & \textbf{PF-F} \\
+\midrule
+\textbf{threshold\_cc} & \textbf{0.917} & \textbf{0.975} & \textbf{0.143} & 1.000 & 0.929 & \textbf{0.963} & 1.000 & 0.952 & \textbf{0.975} & 1.000 & 0.857 & \textbf{0.923} \\
+\textbf{louvain}       & \textbf{0.917} & \textbf{0.975} & \textbf{0.143} & 1.000 & 0.929 & \textbf{0.963} & 1.000 & 0.952 & \textbf{0.975} & 1.000 & 0.857 & \textbf{0.923} \\
+\textbf{label\_prop}   & \textbf{0.917} & \textbf{0.975} & \textbf{0.143} & 1.000 & 0.929 & \textbf{0.963} & 1.000 & 0.952 & \textbf{0.975} & 1.000 & 0.857 & \textbf{0.923} \\
+\textbf{svm}           & \textbf{0.917} & \textbf{0.975} & \textbf{0.143} & 1.000 & 0.929 & \textbf{0.963} & 1.000 & 0.952 & \textbf{0.975} & 1.000 & 0.857 & \textbf{0.923} \\
+hclust\_avg            & 0.276 & 0.713 & 1.315 & 0.537 & 0.929 & 0.681 & 0.583 & 0.920 & 0.713 & 0.231 & 0.857 & 0.364 \\
+pam                    & 0.158 & 0.672 & 1.601 & 0.537 & 0.786 & 0.638 & 0.583 & 0.792 & 0.672 & 0.167 & 0.571 & 0.258 \\
+leiden                 & 0.000 & 0.849 & 1.000 & 1.000 & 0.500 & 0.667 & 1.000 & 0.737 & 0.849 & 0.000 & 0.000 & 0.000 \\
+hclust\_ward           & 0.068 & 0.542 & 1.944 & 0.429 & 0.857 & 0.571 & 0.409 & 0.801 & 0.542 & 0.111 & 0.714 & 0.192 \\
+gc                     & 0.000 & 0.000 & 2.807 & 0.143 & 1.000 & 0.250 & 0.000 & 1.000 & 0.000 & 0.077 & 1.000 & 0.143 \\
+\midrule
+\textit{final}         & 0.917 & 0.975 & 0.143 & 1.000 & 0.929 & 0.963 & 1.000 & 0.952 & 0.975 & 1.000 & 0.857 & 0.923 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Performance Results --- Large Run (50\,000 records/party)}
+
+\begin{table}[h!]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrrrrrrrr}
+\toprule
+\textbf{Method} & \textbf{ARI} & \textbf{NMI} & \textbf{VI} &
+\textbf{B$^3$-P} & \textbf{B$^3$-R} & \textbf{B$^3$-F} &
+\textbf{Hom.} & \textbf{Com.} & \textbf{V} &
+\textbf{PF-P} & \textbf{PF-R} & \textbf{PF-F} \\
+\midrule
+\textbf{threshold\_cc} & \textbf{0.195} & \textbf{0.956} & \textbf{0.908} & \textbf{0.991} & 0.560 & \textbf{0.715} & \textbf{0.997} & 0.917 & \textbf{0.956} & \textbf{0.533} & 0.119 & \textbf{0.195} \\
+louvain                & 0.133 & 0.947 & 1.073 & 0.933 & 0.560 & 0.700 & 0.980 & 0.916 & 0.947 & 0.152 & 0.119 & 0.134 \\
+label\_prop            & 0.133 & 0.947 & 1.073 & 0.933 & 0.560 & 0.700 & 0.980 & 0.916 & 0.947 & 0.152 & 0.119 & 0.134 \\
+leiden                 & 0.000 & 0.951 & 1.000 & 1.000 & 0.500 & 0.667 & 1.000 & 0.907 & 0.951 & 0.000 & 0.000 & 0.000 \\
+hclust\_avg$^*$        & 0.000 & 0.000 & 9.781 & 0.001 & 1.000 & 0.002 & 0.000 & 1.000 & 0.000 & 0.001 & 1.000 & 0.001 \\
+hclust\_ward$^*$       & 0.000 & 0.000 & 9.781 & 0.001 & 1.000 & 0.002 & 0.000 & 1.000 & 0.000 & 0.001 & 1.000 & 0.001 \\
+pam$^*$                & 0.000 & 0.000 & 9.781 & 0.001 & 1.000 & 0.002 & 0.000 & 1.000 & 0.000 & 0.001 & 1.000 & 0.001 \\
+gc$^*$                 & 0.000 & 0.000 & 9.781 & 0.001 & 1.000 & 0.002 & 0.000 & 1.000 & 0.000 & 0.001 & 1.000 & 0.001 \\
+\midrule
+\textit{final}         & 0.195 & 0.956 & 0.908 & 0.991 & 0.560 & 0.715 & 0.997 & 0.917 & 0.956 & 0.533 & 0.119 & 0.195 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+$^*$ \textit{Method failed at runtime and fell back to degenerate singleton assignment.
+hclust\_avg/ward and pam exceeded R's 65,536-observation distance-matrix limit;
+gc attempted a 74.5\,GiB dense allocation. These methods are now excluded from
+\texttt{run\_ncvr5\_large.R}.}
+
+\textit{Metrics: ARI = Adjusted Rand Index; NMI = Normalized Mutual Information;
+VI = Variation of Information (lower is better); B$^3$ = B-cubed; V = V-measure;
+PF = Pairwise F-score; Hom.\ = Homogeneity; Com.\ = Completeness.}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Scale Comparison}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lrrl}
+\toprule
+\textbf{Metric} & \textbf{Small (5K/party)} & \textbf{Large (50K/party)} & \textbf{Comment} \\
+\midrule
+Records            & 10,000    & 100,000    & 10$\times$ scale-up \\
+True matches       & $\sim$880 & $\sim$880  & Same absolute count \\
+Match density      & 8.8\%     & 0.88\%     & 10$\times$ sparser \\
+Best ARI           & 0.917     & 0.195      & $-$0.72 drop \\
+Best B$^3$-F       & 0.963     & 0.715      & $-$0.25 drop \\
+Best method        & threshold\_cc / louvain / label\_prop / svm (tied) & threshold\_cc & Consistent winner \\
+Final correct      & Yes       & Yes        & Merge logic working \\
+Final clusters     & 1,910     & 94,706     & Most records in singletons at large scale \\
+Blocking RR        & $\approx$1.000 & 1.000 & Identical (rounding artefact) \\
+B$^3$ Precision    & 1.000     & 0.991      & Maintained well \\
+B$^3$ Recall       & 0.929     & 0.560      & Major recall drop \\
+Runtime            & $<$1 hr   & $\approx$45 hrs & hclust/pam/gc failures inflated time \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The performance collapse from small to large is driven almost entirely by
+\textbf{recall}: precision stays high (1.0 $\to$ 0.99) but recall drops from
+0.93 to 0.56. At 50K records per party, the sparse surname prefix blocks contain
+so many non-match pairs that true match pairs are diluted, and some are
+truncated by the pair budget cap. This is a blocking problem, not a clustering
+problem.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Final Cluster Assignment}
+
+In both runs the \texttt{final} merge strategy correctly selected
+\textbf{threshold\_cc} (highest ARI).
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lrr}
+\toprule
+\textbf{Statistic} & \textbf{Small} & \textbf{Large} \\
+\midrule
+Total clusters   & 1,910  & 94,706 \\
+Records          & 10,000 & 100,000 \\
+Mean cluster size & 5.2   & 1.06 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The large run's 94,706 clusters from 100,000 records (mean size $\approx$1.06)
+indicates that nearly all records are assigned as singletons --- correctly
+reflecting the low match density (only 880 true matches exist in 100K records).
+The small run's 1,910 clusters from 10,000 records (mean 5.2) is more
+compact but reflects the much higher match density at that scale.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Method-by-Method Interpretation}
+
+\subsection*{Threshold-CC (Best overall --- ARI 0.917 / 0.195)}
+The consistent winner at both scales. At small scale it ties with louvain,
+label\_prop, and svm at ARI = 0.917 and perfect precision (B$^3$-P = 1.0).
+At large scale it retains near-perfect precision (0.991) but recall falls to
+0.560. The connected-components approach is well-suited to the NCVR similarity
+graph: at a threshold of 0.5 the graph separates cleanly, and the four-field
+equal-weight profile creates a well-calibrated similarity score for voter
+records with controlled 2-field modifications.
+
+\subsection*{Louvain / Label Propagation (Tied-best small; second large)}
+Identical to threshold-CC at small scale; slightly weaker at large scale
+(ARI 0.133 vs.\ 0.195). This divergence suggests that at low match density
+the community structure in the graph is less clean, and Louvain/LP begin to
+over-merge some blocks. The lower PairF-P (0.152 vs.\ 0.533 for threshold-CC)
+at large scale confirms more false-positive links.
+
+\subsection*{SVM (Best small; not run large)}
+Ties at ARI = 0.917 in the small run. SVM is excluded from the large run
+script (correctly --- it is too slow at 100K scale). At 5K/party scale it
+adds no benefit over the threshold-CC family on this structured dataset, but
+it would be worth including in any small-scale parameter sweep.
+
+\subsection*{Leiden (Degenerate at both scales --- ARI = 0.000)}
+Perfect precision (1.0) and completeness (0.74/0.91) but ARI = 0 and PairF = 0
+at both scales. Leiden over-partitions: it splits true duplicate pairs into
+separate singleton clusters rather than merging them. The resolution parameter
+is too high for NCVR's similarity graph topology. Needs tuning.
+
+\subsection*{hclust\_avg (Partial failure)}
+Works at small scale (ARI = 0.276, second-best after the graph quartet) but
+fails at large scale with R's 65,536 observation limit. Even at small scale
+it underperforms graph methods substantially.
+
+\subsection*{hclust\_ward / PAM / GC (Fail or degenerate)}
+hclust\_ward and PAM fail at large scale (65K limit). GC degenerates at both
+scales (ARI = 0): at small scale it produces a near-singleton partition with
+perfect recall (B$^3$-R = 1.0) but near-zero precision (0.143); at large scale
+it crashes with a 74.5\,GiB allocation attempt. GC is not viable for NCVR.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Key Findings}
+
+\begin{enumerate}[leftmargin=*, label=\arabic*.]
+  \item \textbf{Threshold-CC is the best and most scalable method.} It wins
+        at both scales, is fast, and avoids the memory failures that affect
+        distance-matrix methods. It is the correct default for NCVR-style
+        4-field voter linkage.
+
+  \item \textbf{The performance drop from small to large is a blocking/density
+        problem, not a clustering problem.} Precision is maintained (0.991) but
+        recall drops from 0.929 to 0.560. At 50K/party, true match pairs are
+        sparser and some are truncated by the 2M pair budget cap. The clustering
+        algorithm cannot recover pairs that blocking discards.
+
+  \item \textbf{Pair budget truncation is active at large scale.}
+        The blocker found 2,121,188 raw pairs ($>$2M budget) and truncated to
+        $\approx$2M. Some true match pairs may have been silently dropped at this
+        step. The budget should be raised or a smarter blocking strategy adopted.
+
+  \item \textbf{hclust\_avg/ward, PAM, and GC are not viable at 100K scale.}
+        All three fail with R's 65K distance-matrix limit or memory exhaustion.
+        They have been removed from the large run script. They should also be
+        flagged as ``small-scale only'' in documentation.
+
+  \item \textbf{Equal weights work well for NCVR.} With 4 equally noisy fields
+        (name, surname, suburb, postcode), equal weighting is a reasonable
+        choice. Unlike CORA (15 fields of varying quality), there is no evidence
+        that weight learning would substantially improve results here.
+
+  \item \textbf{The \texttt{final} merge strategy is working correctly.}
+        It selected threshold-CC (highest ARI) in both runs. The earlier merge
+        bug seen in CORA has been resolved.
+
+  \item \textbf{Leiden consistently degenerates.} ARI = 0 at both scales
+        across NCVR and CORA suggests the default resolution parameter is
+        unsuitable for these datasets. Leiden should not be included in
+        production runs without prior resolution tuning.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Recommendations for Next Steps}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{cp{0.78\linewidth}}
+\toprule
+\textbf{Priority} & \textbf{Action} \\
+\midrule
+{\color{highprio}\textbf{High}}   & Increase pair budget beyond 2M (or make it adaptive) to avoid silent truncation of true matches at large scale. \\[4pt]
+{\color{highprio}\textbf{High}}   & Add pair completeness measurement at Stage 3 to quantify how many true matches the blocker discards. Without this, recall numbers are lower bounds, not true estimates. \\[4pt]
+{\color{highprio}\textbf{High}}   & Remove leiden and gc from default method lists (or add a degenerate-detection guard) --- both produce ARI = 0 consistently without tuning. \\[4pt]
+{\color{medprio}\textbf{Medium}}  & Tune Leiden resolution parameter (try 0.05--0.2) on the small run before running large-scale. \\[4pt]
+{\color{medprio}\textbf{Medium}}  & Try more selective blocking (e.g.\ phonetic key on \texttt{surname} + exact \texttt{postcode}) to improve recall without exploding pair count. \\[4pt]
+{\color{medprio}\textbf{Medium}}  & Run all 5 parties (not just p0 and p1) to assess multi-party linkage performance. \\[4pt]
+{\color{lowprio}\textbf{Low}}     & Profile whether the 45-hour large run time is dominated by the failed hclust/pam/gc attempts (expected: yes). Re-time with fixed method list. \\[4pt]
+{\color{lowprio}\textbf{Low}}     & Experiment with field-specific similarity (Jaro-Winkler for names, exact match for postcode) rather than auto-detected string similarity. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Comparison Across Datasets}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lllp{0.35\linewidth}}
+\toprule
+\textbf{Metric} & \textbf{CORA} & \textbf{Affiliation} & \textbf{NCVR5 (small / large)} \\
+\midrule
+Records        & 1,879  & 2,260  & 10,000 / 100,000 \\
+Fields         & 15     & 1      & 4 \\
+Task           & Dedup  & Dedup  & Linkage \\
+Best ARI       & 0.543  & 0.076  & 0.917 / 0.195 \\
+Best B$^3$-F   & 0.714  & 0.460  & 0.963 / 0.715 \\
+Best method    & SVM    & threshold\_cc & threshold\_cc \\
+Final correct  & No (bug) & Yes  & Yes / Yes \\
+Main bottleneck & Merge bug, equal weights & Blocking, 1 field & Blocking recall, pair budget \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+NCVR5 at small scale is the strongest result across all three datasets
+(ARI = 0.917), reflecting a well-structured 4-field linkage task with controlled
+noise. At large scale the density effect degrades performance substantially.
+The affiliation dataset remains the hardest challenge (ARI = 0.076), driven
+by the single-field limitation.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Output Files}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{File} & \textbf{Description} \\
+\midrule
+\texttt{small/er\_performance.csv}        & Full metric table --- small run (10 methods $\times$ 13 metrics) \\
+\texttt{small/er\_predictions.csv}        & Final cluster assignments --- small run (10,000 records) \\
+\texttt{small/plot\_method\_comparison.pdf} & Grouped bar chart: ARI, B$^3$-F, NMI per method (small) \\
+\texttt{small/plot\_performance\_heatmap.pdf} & Colour heatmap: all metrics $\times$ methods (small) \\
+\texttt{small/plot\_cluster\_sizes.pdf}   & Cluster size distribution histogram (small) \\
+\texttt{small/plot\_precision\_recall.pdf} & Precision vs.\ Recall scatter (small) \\
+\texttt{large/er\_performance.csv}        & Full metric table --- large run (9 methods $\times$ 13 metrics) \\
+\texttt{large/er\_predictions.csv}        & Final cluster assignments --- large run (100,000 records) \\
+\texttt{large/run\_large.log}             & Full console log of large run \\
+\texttt{large/plot\_method\_comparison.pdf} & Grouped bar chart (large) \\
+\texttt{large/plot\_performance\_heatmap.pdf} & Colour heatmap (large) \\
+\texttt{large/plot\_cluster\_sizes.pdf}   & Cluster size distribution histogram (large) \\
+\texttt{large/plot\_precision\_recall.pdf} & Precision vs.\ Recall scatter (large) \\
+\texttt{ncvr5\_data\_profile.pdf}         & Dataset profile: field types, distributions, missingness \\
+\texttt{NCVR5\_RESULTS\_SUMMARY.pdf}      & This document \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}

@@ -1,0 +1,39 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\providecommand \oddpage@label [2]{}
+\@writefile{toc}{\contentsline {section}{Abstract}{1}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {1}Benchmark Overview}{2}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Datasets}{2}{subsection.1.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Benchmark conditions. $^*$Match rate = gold pairs / $\binom  {n}{2}$ (fraction of all possible record pairs that are true matches). CORA and Affiliation are relatively dense; single-field and linkage datasets are very sparse.}}{2}{table.caption.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}Pipeline Configuration Summary}{2}{subsection.1.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces $^a$ SVM killed after $\approx $20 hours (885K pairs, estimated 1--4 days to complete). $^b$ Truncated from 2,121,188 (pair budget cap exceeded). $^c$ hclust/pam/gc excluded: exceed R's 65,536-observation distance-matrix limit or require 74.5\,GiB dense allocation. N10 uses 5M pair budget vs.\ 2M for N5-l.}}{2}{table.caption.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Per-Dataset Results}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}CORA Bibliographic Dataset (C)}{2}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Affiliation Strings Dataset (A)}{2}{subsection.2.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces CORA performance (rerun 2026-03-26, merge bug fixed). $^\dagger $gc failed with dimension mismatch error.}}{3}{table.caption.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Affiliation Strings performance. PF columns omitted (in individual summary).}}{3}{table.caption.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Synthetic 10K Dataset (S)}{3}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}NCVR 5-Party Dataset (N5)}{3}{subsection.2.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Synthetic 10K performance. PF columns omitted (in individual summary).}}{4}{table.caption.7}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces NCVR 5-Party performance at small (10K records) and large (100K records) scale.}}{4}{table.caption.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}NCVR 10-Party Dataset (N10)}{4}{subsection.2.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces NCVR 10-Party performance (100K records). ARI, NMI, VI, and PairF not computed at this scale (O($n^2$) evaluation bottleneck). Hom.\ = Homogeneity; Com.\ = Completeness.}}{5}{table.caption.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Cross-Dataset Analysis}{5}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Overall Performance Comparison}{5}{subsection.3.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Best performance per dataset/condition. ``Final correct'' = did the \texttt  {best} merge strategy select the actual best method? NCVR10 ARI/PairF not available (evaluation bottleneck at $n=100{,}000$). V = V-measure.}}{5}{table.caption.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Method Consistency Across Datasets}{5}{subsection.3.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Primary metric by method and condition (n/a = not run; fail = runtime error). CORA/Aff/Syn10K/N5 values are ARI; N10$^\dagger $ values are B$^3$-F (ARI unavailable at 100K scale).}}{5}{table.caption.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Blocking Effectiveness}{6}{subsection.3.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Blocking effectiveness per dataset. $^*$NCVR5-large 2M budget was the primary cause of recall=0.560; raising to 5M (as in NCVR10) recovers recall=0.991.}}{6}{table.caption.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Scalability Profile}{6}{subsection.3.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Performance Drivers}{6}{subsection.3.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Scalability limits by method.}}{7}{table.caption.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6}The \texttt  {final} Merge Strategy}{7}{subsection.3.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Final merge selection per condition. ---= not computed (evaluation bottleneck). The merge bug was present in the original CORA run and fixed before subsequent runs.}}{7}{table.caption.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Unified Key Findings}{8}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Unified Recommendations}{9}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusions}{9}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Output Files Reference}{10}{section.7}\protected@file@percent }
+\gdef \@abspage@last{10}

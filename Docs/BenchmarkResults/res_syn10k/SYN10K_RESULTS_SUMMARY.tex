@@ -1,0 +1,288 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+
+\definecolor{highprio}{HTML}{CC0000}
+\definecolor{medprio}{HTML}{CC8800}
+\definecolor{lowprio}{HTML}{007700}
+
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = blue!60!black,
+  urlcolor   = blue!60!black,
+}
+
+\title{\textbf{ERBOT Results Summary}\\[4pt]
+       \large Synthetic 10K Dataset}
+\author{ERBOT v0.2.0}
+\date{Generated: 2026-03-23 \quad|\quad Run time: $\approx$11 minutes (SVM excluded)}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\vspace{1em}
+\hrule
+\vspace{1em}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Dataset Overview}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Property} & \textbf{Value} \\
+\midrule
+Dataset      & Synthetic 10K (d10k) \\
+Records      & 10,000 \\
+Fields       & 2 (\texttt{id}, \texttt{text}) \\
+Task         & Deduplication (single-source) \\
+Ground truth & 8,705 matched pairs (from \texttt{10Kduplicates.csv}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The synthetic 10K dataset consists of 10,000 noisy text records generated to simulate
+real-world deduplication challenges. Each record has a single free-text field
+(\texttt{text}) containing a scrambled mix of tokens --- names, dates, numbers,
+addresses --- with no explicit field structure. Duplicates are introduced by corrupting
+original records with character substitutions, token deletions, and reorderings,
+mimicking common data entry and OCR errors.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Pipeline Configuration}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Stage} & \textbf{Setting} & \textbf{Value} \\
+\midrule
+Blocking   & Method          & Prefix blocking on \texttt{text}, length 3 \\
+Blocking   & Candidate pairs & 885,301 \\
+Blocking   & Reduction ratio & 0.982 (98.2\% of all pairs eliminated) \\
+Similarity & Fields computed & 1 (\texttt{text} only) \\
+Weights    & Method          & Equal (weight = 1.0 for \texttt{text}) \\
+Clustering & Methods run     & 8 (SVM excluded --- see note) \\
+Merge      & Strategy        & Best \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{SVM excluded:} SVM was initially run but terminated after $\approx$20 hours
+without completing. With 885,301 candidate pairs, SVM training time was estimated at
+1--4 days due to its super-linear scaling with the number of pairs. All other 8 methods
+completed in $\approx$11 minutes. SVM remains viable for smaller datasets (CORA at
+137K pairs completed in $\approx$63 minutes total) but is not practical at this scale
+without subsampling or approximation. A scalable alternative --- logistic regression or
+gradient boosting --- is recommended as a replacement.
+
+\textbf{Blocking note:} 885,301 pairs from 10,000 records (49,995,000 total possible).
+Prefix-3 achieves 98.2\% reduction --- the highest across all three datasets tested.
+However, for a single noisy text field, many true matches will have corrupted or
+reordered opening tokens and are silently discarded at this stage.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Performance Results}
+
+8 clustering methods evaluated (SVM excluded):
+
+\begin{table}[h!]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrrrrrr}
+\toprule
+\textbf{Method} & \textbf{ARI} & \textbf{NMI} & \textbf{VI} &
+\textbf{B$^3$-P} & \textbf{B$^3$-R} & \textbf{B$^3$-F} &
+\textbf{Hom.} & \textbf{Com.} & \textbf{V} \\
+\midrule
+leiden           & 0.000 & \textbf{0.914} & \textbf{1.97} & \textbf{1.000} & 0.271 & \textbf{0.426} & \textbf{1.000} & 0.841 & \textbf{0.914} \\
+\textbf{threshold\_cc} & \textbf{0.023} & 0.778 & 4.21 & 0.334 & 0.519 & 0.406 & 0.707 & 0.865 & 0.778 \\
+\textbf{louvain} & \textbf{0.023} & 0.778 & 4.21 & 0.334 & 0.519 & 0.406 & 0.707 & 0.865 & 0.778 \\
+\textbf{label\_prop} & \textbf{0.023} & 0.778 & 4.21 & 0.334 & 0.519 & 0.406 & 0.707 & 0.865 & 0.778 \\
+hclust\_avg      & 0.002 & 0.371 & 8.82 & 0.019 & 0.573 & 0.036 & 0.249 & 0.727 & 0.371 \\
+pam              & 0.002 & 0.371 & 8.82 & 0.019 & 0.573 & 0.036 & 0.249 & 0.727 & 0.371 \\
+hclust\_ward     & 0.001 & 0.347 & 8.80 & 0.019 & 0.690 & 0.037 & 0.224 & 0.772 & 0.347 \\
+gc               & 0.000 & 0.000 & 10.4 & 0.001 & 1.000 & 0.002 & 0.000 & 1.000 & 0.000 \\
+\midrule
+\textit{final}   & 0.023 & 0.778 & 4.21 & 0.334 & 0.519 & 0.406 & 0.707 & 0.865 & 0.778 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{Metrics: ARI = Adjusted Rand Index; NMI = Normalized Mutual Information;
+VI = Variation of Information (lower is better); B$^3$ = B-cubed; V = V-measure;
+Hom.\ = Homogeneity; Com.\ = Completeness. Full PairF values in \texttt{er\_performance.csv}.}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Final Cluster Assignment}
+
+The \texttt{final} strategy correctly selected \textbf{threshold\_cc} (highest ARI = 0.023).
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lr}
+\toprule
+\textbf{Statistic} & \textbf{Value} \\
+\midrule
+Total clusters    & 1,619 \\
+Records           & 10,000 \\
+Mean cluster size & 6.2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Method-by-Method Interpretation}
+
+\subsection*{Threshold-CC / Louvain / Label Propagation (Highest ARI --- 0.023)}
+The three graph-based methods again converge to identical solutions, confirming that
+similarity graph structure dominates algorithm choice. B$^3$-F of 0.406 with precision
+0.334 and recall 0.519 is a moderate result --- about half of true matches are found at
+the cost of some false merges. These are the best practical methods at this scale.
+
+\subsection*{Leiden (ARI = 0.000, NMI = 0.914, B$^3$-F = 0.426)}
+Leiden produces the highest NMI and B$^3$-F but zero ARI. This apparent contradiction
+arises because ARI heavily penalises over-splitting: Leiden creates many small, highly
+pure sub-clusters (B$^3$-precision = 1.000) but each true entity is fragmented across
+multiple predicted clusters (recall = 0.271). The clusters are perfectly pure but
+incomplete.
+
+For applications where \textbf{false merges are very costly} (e.g.\ legal identity
+resolution where merging two different people is a serious error), Leiden at its default
+resolution is actually the safest choice. For applications where \textbf{recall matters},
+threshold-CC is better.
+
+\subsection*{hclust\_avg / PAM (ARI $\approx$ 0.002)}
+Near-zero ARI despite moderate NMI. Both achieve near-zero precision (0.019), meaning
+almost every pair they merge is a false positive. At 10K records the similarity matrix
+is too sparse and noisy for centroidal/hierarchical methods to find meaningful structure.
+
+\subsection*{hclust\_ward (ARI = 0.001)}
+Similar to hclust\_avg. Ward linkage performs marginally worse on precision but slightly
+better on recall. Hierarchical methods are clearly not suited to large sparse similarity
+matrices.
+
+\subsection*{GC --- Graph Coloring (Degenerate --- ARI = 0.000)}
+Perfect recall, near-zero precision, collapsed to one giant cluster. The gc dimension
+mismatch error persists across all three datasets --- this is a recurring bug in the
+GCMER interface layer that needs fixing.
+
+\subsection*{SVM (Not Run)}
+SVM was launched but killed after $\approx$20 hours still processing 885,301 pairs.
+Based on observed runtimes on smaller datasets (CORA 137K pairs: included in 63 min;
+affiliation 164K pairs: dominated a 5.6-hour run), estimated completion time for 885K
+pairs was 1--4 days. SVM's kernel matrix computation scales super-linearly with the
+number of training examples, making it impractical at this dataset size. Logistic
+regression or gradient boosting are recommended as drop-in replacements with
+near-linear scaling.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Key Findings}
+
+\begin{enumerate}[leftmargin=*, label=\arabic*.]
+  \item \textbf{Overall performance is very low.} Best ARI is 0.023 --- lower than
+        affiliation (0.076) and far below CORA (0.746). At 10,000 records with a single
+        noisy unstructured text field, the task is fundamentally harder.
+
+  \item \textbf{Blocking discards too many true matches.} 98.2\% reduction is
+        aggressive. With only 8,705 gold pairs in a 10,000-record dataset, many duplicates
+        involve records with corrupted or reordered first tokens, which prefix-3 blocking
+        eliminates silently. Blocking is the primary performance bottleneck.
+
+  \item \textbf{Leiden is the precision champion.} Perfect B$^3$-precision (1.000) and
+        NMI (0.914) make Leiden the best choice when false merges must be avoided.
+        Its ARI = 0 reflects over-splitting, not noise.
+
+  \item \textbf{SVM is not viable at this scale.} For datasets above $\approx$200K
+        candidate pairs, SVM should be replaced with a faster supervised classifier.
+
+  \item \textbf{Graph methods plateau quickly.} Threshold-CC, Louvain, and Label
+        Propagation give identical results here as in the previous two datasets. The
+        similarity graph structure consistently dominates community detection algorithm
+        choice.
+
+  \item \textbf{The \texttt{final} merge correctly selected threshold\_cc.} Merge bug
+        fix continues to work correctly across all three datasets.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Recommendations for Next Steps}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{cp{0.78\linewidth}}
+\toprule
+\textbf{Priority} & \textbf{Action} \\
+\midrule
+{\color{highprio}\textbf{High}}  & Replace prefix-3 blocking with SN blocking (window = 40--80) --- the 98.2\% reduction is too aggressive for a noisy single-field dataset. \\[4pt]
+{\color{highprio}\textbf{High}}  & Replace SVM with logistic regression or gradient boosting for supervised classification --- near-linear scalability, similar accuracy. \\[4pt]
+{\color{medprio}\textbf{Medium}} & Tune Leiden resolution downward (try 0.1--0.3) to improve recall while preserving its high precision. \\[4pt]
+{\color{medprio}\textbf{Medium}} & Fix GC dimension mismatch error --- silently falls back to degenerate solution across all datasets. \\[4pt]
+{\color{medprio}\textbf{Medium}} & Measure pair completeness at Stage 3 to quantify how many gold pairs are lost at blocking. \\[4pt]
+{\color{lowprio}\textbf{Low}}    & Explore token-set / Jaccard similarity instead of default string similarity for unstructured text. \\[4pt]
+{\color{lowprio}\textbf{Low}}    & Try field parsing: split \texttt{text} into sub-fields (name, date, address tokens) to enable multi-field similarity. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Cross-Dataset Comparison}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{llll}
+\toprule
+\textbf{Metric} & \textbf{CORA} & \textbf{Affiliation} & \textbf{Syn10k} \\
+\midrule
+Records              & 1,879   & 2,260   & 10,000 \\
+Fields (usable)      & 15      & 1       & 1 \\
+Gold pairs           & 64,578  & 32,816  & 8,705 \\
+Candidate pairs      & 137,707 & 164,719 & 885,301 \\
+Blocking RR          & 92.2\%  & 93.5\%  & 98.2\% \\
+Best ARI             & 0.746   & 0.076   & 0.023 \\
+Best B$^3$-F         & 0.738   & 0.460   & 0.426 \\
+Best method (ARI)    & hclust\_avg & threshold\_cc & threshold\_cc \\
+SVM viable?          & Yes ($\approx$63 min) & Marginal ($\approx$5.6h) & No ($\approx$1--4 days) \\
+Final correct?       & Yes     & Yes     & Yes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The clear trend: \textbf{more records + fewer fields = lower performance}. CORA benefits
+from 15 discriminative fields that collectively identify duplicates even under noise.
+Affiliation and Syn10k each have one field, forcing all discriminative power through a
+single noisy similarity score.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Output Files}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{File} & \textbf{Description} \\
+\midrule
+\texttt{er\_performance.csv}          & Full metric table (9 methods $\times$ 13 metrics) \\
+\texttt{er\_predictions.csv}          & Final cluster assignments (10,000 records $\times$ 2 columns) \\
+\texttt{d10k\_data\_profile.pdf}      & Dataset profile: field types, distributions, missingness \\
+\texttt{plot\_method\_comparison.pdf} & Grouped bar chart: ARI, B$^3$-F, NMI per method \\
+\texttt{plot\_performance\_heatmap.pdf} & Colour heatmap: all metrics $\times$ all methods \\
+\texttt{plot\_cluster\_sizes.pdf}     & Cluster size distribution histogram \\
+\texttt{plot\_precision\_recall.pdf}  & Precision vs.\ Recall scatter (B-cubed and Pair-F) \\
+\texttt{SYN10K\_RESULTS\_SUMMARY.pdf} & This document \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}

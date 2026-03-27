@@ -1,0 +1,5 @@
+method,ARI,NMI,VI,Bcubed_P,Bcubed_R,Bcubed_F,Homogeneity,Completeness,Vmeasure,PairF_P,PairF_R,PairF_F
+threshold_cc,NA,NA,NA,0.8242,0.9905,0.8997,0.9514,0.9988,0.9745,NA,NA,NA
+louvain,NA,NA,NA,0.6288,0.9906,0.7693,0.8347,0.9986,0.9093,NA,NA,NA
+label_prop,NA,NA,NA,0.6288,0.9906,0.7693,0.8347,0.9986,0.9093,NA,NA,NA
+final,NA,NA,NA,0.8242,0.9905,0.8997,0.9514,0.9988,0.9745,NA,NA,NA

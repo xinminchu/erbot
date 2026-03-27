@@ -1,0 +1,80 @@
+- The project is out-of-sync -- use `renv::status()` for details.
+Warning message:
+replacing previous import 'dplyr::combine' by 'gridExtra::combine' when loading 'erbot' 
+Loading NCVR 5-party data (large run: 50K per party)...
+  Combined records: 100000 
+  True cross-party matches: 880 
+Running erbot pipeline (large — no SVM)...
+[er_run] Stage 1: loading data...
+  n = 100000 records, 6 columns
+[er_run] Stage 2: diagnosing fields...
+  mode=link, blocking_needed=TRUE, recommended=standard on 'suburb'
+[er_run] Stage 3: blocking...
+  1,059,972 candidate pairs generated.
+[er_run] Stage 4: computing per-field similarities...
+  4 field(s) computed.
+[er_run] Stage 5: computing field weights...
+  weights: givenname=0.250, surname=0.250, suburb=0.250, postcode=0.250
+[er_run] Stage 6: combining similarities...
+  S: 100000 x 100000 sparse matrix, 2119944 non-zero entries.
+[er_run] Stage 7: clustering...
+  er_cluster_all: running hclust_avg
+  er_cluster_all: hclust_avg failed: size cannot be NA nor exceed 65536
+  er_cluster_all: running hclust_ward
+  er_cluster_all: hclust_ward failed: size cannot be NA nor exceed 65536
+  er_cluster_all: running pam
+  er_cluster_all: pam failed: have 100000 observations, but not more than 65536 are allowed
+  er_cluster_all: running threshold_cc
+  er_cluster_all: running louvain
+  er_cluster_all: running leiden
+  er_cluster_all: running label_prop
+  er_cluster_all: running gc
+  er_cluster_all: gc failed: cannot allocate vector of size 74.5 Gb
+  8 method(s) ran.
+[er_run] Stage 8: merging / post-processing...
+  final: 94706 clusters.
+[er_run] Stage 9a: evaluating (supervised)...
+  predictions written to D:/ResearchHub/01_projects/erbot/results/res_ncvr5/large/er_predictions.csv
+  performance table written to D:/ResearchHub/01_projects/erbot/results/res_ncvr5/large/er_performance.csv
+[er_run] Done. Elapsed: 162529.8s
+
+=== ERBOT result: n=100000, clusters=94706, elapsed=162529.8s ===
+  Blocking: 1,059,972 pairs (RR=1.000)
+
+  Performance (primary metrics):
+# A tibble: 9 × 5
+  method         ARI Bcubed_F Homogeneity Completeness
+  <chr>        <dbl>    <dbl>       <dbl>        <dbl>
+1 hclust_avg   0       0.0023       0            1    
+2 hclust_ward  0       0.0023       0            1    
+3 pam          0       0.0023       0            1    
+4 threshold_cc 0.195   0.715        0.997        0.917
+5 louvain      0.133   0.700        0.980        0.916
+6 leiden       0       0.667        1            0.907
+7 label_prop   0.133   0.700        0.980        0.916
+8 gc           0       0.0023       0            1    
+9 final        0.195   0.715        0.997        0.917
+Warning messages:
+1: In .pairs_from_blocks(pfx, max_pairs) :
+  er_block: pair budget exceeded (2,121,188 > 2e+06). Truncating.
+2: In asMethod(object) :
+  sparse->dense coercion: allocating vector of size 74.5 GiB
+
+=== NCVR5 Large Run Results ===
+# A tibble: 9 × 13
+  method     ARI   NMI    VI Bcubed_P Bcubed_R Bcubed_F Homogeneity Completeness
+  <chr>    <dbl> <dbl> <dbl>    <dbl>    <dbl>    <dbl>       <dbl>        <dbl>
+1 hclust_… 0     0     9.78    0.0011    1       0.0023       0            1    
+2 hclust_… 0     0     9.78    0.0011    1       0.0023       0            1    
+3 pam      0     0     9.78    0.0011    1       0.0023       0            1    
+4 thresho… 0.195 0.956 0.908   0.991     0.560   0.715        0.997        0.917
+5 louvain  0.133 0.947 1.07    0.933     0.560   0.700        0.980        0.916
+6 leiden   0     0.951 1       1         0.5     0.667        1            0.907
+7 label_p… 0.133 0.947 1.07    0.933     0.560   0.700        0.980        0.916
+8 gc       0     0     9.78    0.0011    1       0.0023       0            1    
+9 final    0.195 0.956 0.908   0.991     0.560   0.715        0.997        0.917
+# ℹ 4 more variables: Vmeasure <dbl>, PairF_P <dbl>, PairF_R <dbl>,
+#   PairF_F <dbl>
+  All plots saved.
+
+Done. Results saved to: D:/ResearchHub/01_projects/erbot/results/res_ncvr5/large 

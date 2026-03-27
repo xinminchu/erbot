@@ -1,0 +1,276 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+
+% Colour definitions for priority levels
+\definecolor{highprio}{HTML}{CC0000}
+\definecolor{medprio}{HTML}{CC8800}
+\definecolor{lowprio}{HTML}{007700}
+
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = blue!60!black,
+  urlcolor   = blue!60!black,
+}
+
+\title{\textbf{ERBOT Results Summary}\\[4pt]
+       \large Affiliation Strings Dataset}
+\author{ERBOT v0.2.0}
+\date{Generated: 2026-03-22 \quad|\quad Run time: $\approx$5.6 hours}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\vspace{1em}
+\hrule
+\vspace{1em}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Dataset Overview}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Property} & \textbf{Value} \\
+\midrule
+Dataset      & Affiliation Strings \\
+Records      & 2,260 \\
+Fields       & 2 (\texttt{id}, \texttt{affiliation}) \\
+Task         & Deduplication (single-source) \\
+Ground truth & 32,816 matched pairs (from \texttt{affiliationstrings\_mapping.csv}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Affiliation strings is a benchmark of research paper author affiliations --- free-text strings
+such as ``Dept.\ of Computer Science, MIT, Cambridge, MA'' that refer to real-world institutions.
+The same institution appears under many surface forms: abbreviations, missing department names,
+country variants, spelling differences, and language variations. The dataset has only one content
+field (\texttt{affiliation}), making it a hard single-field deduplication task.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Pipeline Configuration}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Stage} & \textbf{Setting} & \textbf{Value} \\
+\midrule
+Blocking   & Method          & Prefix blocking on \texttt{affiliation}, length 3 \\
+Blocking   & Candidate pairs & 164,719 \\
+Blocking   & Reduction ratio & 0.935 (93.5\% of all pairs eliminated) \\
+Similarity & Fields computed & 1 (\texttt{affiliation} only) \\
+Weights    & Method          & Equal (weight = 1.0 for \texttt{affiliation}) \\
+Clustering & Methods run     & 9 \\
+Merge      & Strategy        & Best \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Blocking note:} 164,719 pairs from 2,260 records (2,547,670 total possible).
+Prefix-3 on \texttt{affiliation} eliminates 93.5\% of pairs. However, affiliation strings are
+highly variable in their opening tokens --- ``University of X'', ``Dept.\ of Y, University of
+X'', ``X University'', and ``X Univ.'' all refer to the same institution but have different
+3-character prefixes. This means blocking likely discards many true matches before evaluation
+even begins, directly limiting recall for all methods.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Performance Results}
+
+All 9 clustering methods evaluated against the gold standard:
+
+\begin{table}[h!]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrrrrrr}
+\toprule
+\textbf{Method} & \textbf{ARI} & \textbf{NMI} & \textbf{VI} &
+\textbf{B$^3$-P} & \textbf{B$^3$-R} & \textbf{B$^3$-F} &
+\textbf{Hom.} & \textbf{Com.} & \textbf{V} \\
+\midrule
+\textbf{threshold\_cc} & \textbf{0.076} & 0.688 & 4.24 & \textbf{0.395} & 0.550 & \textbf{0.460} & 0.606 & 0.796 & 0.688 \\
+\textbf{louvain}       & \textbf{0.076} & 0.688 & 4.24 & 0.394 & 0.550 & 0.459 & 0.606 & 0.796 & 0.688 \\
+\textbf{label\_prop}   & \textbf{0.076} & 0.688 & 4.24 & 0.394 & 0.550 & 0.459 & 0.606 & 0.796 & 0.688 \\
+leiden                 & 0.000 & \textbf{0.819} & \textbf{3.42} & 1.000 & 0.146 & 0.255 & 1.000 & 0.693 & \textbf{0.819} \\
+svm                    & 0.035 & \textbf{0.818} & \textbf{3.40} & \textbf{0.977} & 0.159 & 0.273 & \textbf{0.990} & 0.697 & \textbf{0.818} \\
+hclust\_avg            & 0.053 & 0.516 & 5.84 & 0.184 & 0.530 & 0.272 & 0.404 & 0.716 & 0.516 \\
+pam                    & 0.053 & 0.516 & 5.84 & 0.184 & 0.530 & 0.272 & 0.404 & 0.716 & 0.516 \\
+hclust\_ward           & 0.042 & 0.516 & 5.89 & 0.185 & 0.519 & 0.273 & 0.406 & 0.706 & 0.516 \\
+gc                     & 0.000 & 0.000 & 7.72 & 0.007 & 1.000 & 0.014 & 0.000 & 1.000 & 0.000 \\
+\midrule
+\textit{final}         & 0.076 & 0.688 & 4.24 & 0.395 & 0.550 & 0.460 & 0.606 & 0.796 & 0.688 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{Metrics: ARI = Adjusted Rand Index; NMI = Normalized Mutual Information;
+VI = Variation of Information (lower is better); B$^3$ = B-cubed; V = V-measure;
+Hom.\ = Homogeneity; Com.\ = Completeness. PairF columns in \texttt{er\_performance.csv}.}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Final Cluster Assignment}
+
+The \texttt{final} strategy correctly selected \textbf{threshold\_cc} (highest ARI = 0.076).
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lr}
+\toprule
+\textbf{Statistic} & \textbf{Value} \\
+\midrule
+Total clusters   & 290 \\
+Records          & 2,260 \\
+Mean cluster size & 7.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+290 clusters from 2,260 records is a reasonable partition for an affiliation dataset where each
+real institution may appear under dozens of surface forms.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Method-by-Method Interpretation}
+
+\subsection*{Threshold-CC / Louvain / Label Propagation (Best --- ARI = 0.076)}
+All three produce nearly identical results (as with CORA), again indicating the similarity graph
+has dominant structure that overwhelms algorithm differences. B$^3$-F of 0.460 reflects a
+reasonable balance: precision 0.395 (some false merges) and recall 0.550 (misses about half of
+true matches). These graph-based methods are the practical ceiling given equal-weight single-field
+similarity.
+
+\subsection*{SVM (ARI = 0.035 --- paradoxically worse than threshold-CC)}
+SVM has near-perfect precision (0.977) and near-perfect homogeneity (0.990) but extremely low
+recall (0.159). It is so conservative that it only merges pairs it is almost certain about,
+producing many small, pure clusters --- but missing the vast majority of true duplicates. On a
+single-field dataset with high surface-form variability, SVM cannot generalise beyond the
+high-confidence pairs in its training signal, making it less useful than the simpler threshold
+approach. High NMI (0.818) reflects the purity of its clusters, not their coverage.
+
+\subsection*{Leiden (Degenerate --- ARI = 0.000)}
+Perfect homogeneity (1.0) and highest NMI (0.819) but near-zero recall (0.146). Like SVM,
+Leiden over-partitioned --- the resolution parameter is too high for this dataset, creating
+hundreds of tiny, pure sub-clusters instead of merging variants of the same institution.
+The VI score (3.42) is the best of the non-SVM methods despite ARI = 0, reflecting high
+per-cluster purity. Needs a lower resolution parameter.
+
+\subsection*{GC --- Graph Coloring (Degenerate --- ARI = 0.000)}
+Perfect recall (1.0) but near-zero precision (0.007), collapsing all 2,260 records into
+effectively one cluster. GC continues to fail at the default threshold --- the dimension
+mismatch error also caused it to fall back to a degenerate solution silently.
+
+\subsection*{PAM / hclust\_avg / hclust\_ward (ARI $\approx$ 0.042--0.053)}
+All three are below threshold-CC. They find some structure but the similarity matrix from a
+single noisy text field is insufficiently informative to guide centroidal or hierarchical methods
+toward the true partition.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Key Findings}
+
+\begin{enumerate}[leftmargin=*, label=\arabic*.]
+  \item \textbf{Overall performance is low.} Best ARI is 0.076 --- far below CORA (0.746).
+        This is expected: affiliation deduplication is intrinsically harder because (a) only one
+        field is available, (b) surface-form variability is extreme (abbreviations, reorderings,
+        language variants), and (c) prefix-3 blocking likely discards many true matches before
+        evaluation.
+
+  \item \textbf{Blocking is the primary bottleneck.} Prefix-3 on \texttt{affiliation} is poorly
+        suited to this dataset. Affiliation strings start with highly variable tokens
+        (``University of'', ``Dept.'', city names, acronyms). Many true duplicates will have
+        non-matching 3-character prefixes and are silently dropped at Stage 3. This single issue
+        likely accounts for most of the low recall across all methods.
+
+  \item \textbf{SVM precision--recall tradeoff is extreme.} Precision = 0.977, recall = 0.159.
+        SVM learns to be extremely conservative on this noisy single-field data --- it finds the
+        easy matches but ignores the hard ones. For high-precision applications SVM is useful;
+        for high-recall applications it is not.
+
+  \item \textbf{Graph methods are the practical best.} Threshold-CC, Louvain, and Label
+        Propagation achieve the best balanced B$^3$-F (0.460) and are robust, consistent, and
+        fast relative to SVM.
+
+  \item \textbf{Equal weights are not the issue here.} With only one field, weight learning
+        cannot help. The limiting factors are blocking and similarity function choice.
+
+  \item \textbf{The \texttt{final} merge correctly picked threshold\_cc.} The merge bug fix
+        is working as expected across datasets.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Recommendations for Next Steps}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{cp{0.78\linewidth}}
+\toprule
+\textbf{Priority} & \textbf{Action} \\
+\midrule
+{\color{highprio}\textbf{High}}  & Replace prefix-3 blocking with SN blocking (sorted neighbourhood, window = 40--60) on \texttt{affiliation} --- far better suited to variable-length strings with no consistent prefix. \\[4pt]
+{\color{highprio}\textbf{High}}  & Use token-set ratio or Jaccard on token sets as the similarity function --- affiliation strings are bag-of-words problems, not edit-distance problems. \\[4pt]
+{\color{medprio}\textbf{Medium}} & Tune Leiden resolution (try 0.05--0.2) to reduce over-splitting. \\[4pt]
+{\color{medprio}\textbf{Medium}} & Fix GC dimension mismatch error --- \texttt{gc} falls back to a degenerate solution silently. \\[4pt]
+{\color{medprio}\textbf{Medium}} & Measure pair completeness at Stage 3 to quantify how many true matches blocking discards. \\[4pt]
+{\color{lowprio}\textbf{Low}}    & Try TF-IDF + cosine similarity with IDF trained on the full affiliation corpus --- common tokens like ``University'' and ``Department'' should be down-weighted. \\[4pt]
+{\color{lowprio}\textbf{Low}}    & Try record linkage with an external affiliation authority list (ROR, OpenAlex institutions) as a lookup layer before ER. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Comparison with CORA}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lllp{0.38\linewidth}}
+\toprule
+\textbf{Metric} & \textbf{CORA} & \textbf{Affiliation} & \textbf{Interpretation} \\
+\midrule
+Records       & 1,879  & 2,260  & Similar scale \\
+Fields        & 15     & 1      & Affiliation severely disadvantaged \\
+Best ARI      & 0.746  & 0.076  & $\approx$10$\times$ harder \\
+Best B$^3$-F  & 0.738  & 0.460  & Large gap \\
+Best method   & hclust\_avg & threshold\_cc & Different winners \\
+Final correct & Yes    & Yes    & Merge fix working \\
+Blocking RR   & 92.2\% & 93.5\% & Similar reduction \\
+Runtime       & $\approx$63 min & $\approx$338 min & SVM bottleneck \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The performance gap is almost entirely explained by the field count: CORA has 15 discriminative
+fields that jointly identify duplicates; affiliation has one highly variable text field with no
+supporting structure.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Output Files}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{File} & \textbf{Description} \\
+\midrule
+\texttt{er\_performance.csv}           & Full metric table (10 methods $\times$ 13 metrics) \\
+\texttt{er\_predictions.csv}           & Final cluster assignments (2,260 records $\times$ 2 columns) \\
+\texttt{affiliation\_data\_profile.pdf} & Dataset profile: field types, distributions, missingness \\
+\texttt{plot\_method\_comparison.pdf}  & Grouped bar chart: ARI, B$^3$-F, NMI per method \\
+\texttt{plot\_performance\_heatmap.pdf} & Colour heatmap: all metrics $\times$ all methods \\
+\texttt{plot\_cluster\_sizes.pdf}      & Cluster size distribution histogram \\
+\texttt{plot\_precision\_recall.pdf}   & Precision vs.\ Recall scatter (B-cubed and Pair-F) \\
+\texttt{AFF\_RESULTS\_SUMMARY.pdf}     & This document \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}

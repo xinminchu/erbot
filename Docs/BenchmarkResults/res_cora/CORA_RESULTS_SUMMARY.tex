@@ -1,0 +1,255 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage{fontenc}
+\usepackage[utf8]{inputenc}
+
+% Colour definitions for priority levels
+\definecolor{highprio}{HTML}{CC0000}
+\definecolor{medprio}{HTML}{CC8800}
+\definecolor{lowprio}{HTML}{007700}
+
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = blue!60!black,
+  urlcolor   = blue!60!black,
+}
+
+\title{\textbf{ERBOT Results Summary}\\[4pt]
+       \large CORA Bibliographic Dataset}
+\author{ERBOT v0.2.0}
+\date{Generated: 2026-03-26 (rerun) \quad|\quad Run time: $\approx$54 minutes}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\vspace{1em}
+\hrule
+\vspace{1em}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Dataset Overview}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Property} & \textbf{Value} \\
+\midrule
+Dataset      & CORA Bibliographic Bibliography \\
+Records      & 1,879 \\
+Fields       & 16 (\texttt{id}, \texttt{title}, \texttt{booktitle}, \texttt{authors}, \texttt{address},
+               \texttt{date}, \texttt{year}, \texttt{editor}, \texttt{journal}, \texttt{volume},
+               \texttt{pages}, \texttt{publisher}, \texttt{institution}, \texttt{type}, \texttt{tech}, \texttt{note}) \\
+Task         & Deduplication (single-source) \\
+Ground truth & 64,578 matched pairs (from \texttt{cora\_gold.csv}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+CORA is a standard entity resolution benchmark consisting of research paper citations with
+substantial noise: missing fields, inconsistent formatting, OCR errors, and partial references.
+The same real paper may appear multiple times with different field values across entries.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Pipeline Configuration}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Stage} & \textbf{Setting} & \textbf{Value} \\
+\midrule
+Blocking   & Method          & Prefix blocking on \texttt{title}, length 3 \\
+Blocking   & Candidate pairs & 137,707 \\
+Blocking   & Reduction ratio & 0.922 (92.2\% of all pairs eliminated) \\
+Similarity & Fields computed & 15 (all non-ID fields) \\
+Weights    & Method          & Equal (1/15 per field) \\
+Clustering & Methods run     & 9 \\
+Merge      & Strategy        & Best (consensus) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Blocking note:} 137,707 pairs from 1,879 records (1,764,381 total possible).
+The prefix-3 blocking on \texttt{title} achieves 92.2\% reduction while retaining candidate pairs.
+Pair completeness (fraction of true matches retained) was not recorded in this run due to truth
+format --- worth measuring in future runs.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Performance Results}
+
+All 9 clustering methods evaluated against the gold standard:
+
+\begin{table}[h!]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrrrrrrrr}
+\toprule
+\textbf{Method} & \textbf{ARI} & \textbf{NMI} & \textbf{VI} &
+\textbf{B$^3$-P} & \textbf{B$^3$-R} & \textbf{B$^3$-F} &
+\textbf{Hom.} & \textbf{Com.} & \textbf{V} &
+\textbf{PF-P} & \textbf{PF-R} & \textbf{PF-F} \\
+\midrule
+\textbf{hclust\_avg}  & \textbf{0.746} & \textbf{0.855} & \textbf{1.54} & \textbf{0.651} & 0.849 & \textbf{0.737} & \textbf{0.804} & 0.912 & \textbf{0.855} & \textbf{0.712} & 0.808 & \textbf{0.757} \\
+hclust\_ward         & 0.524 & 0.827 & 1.88 & 0.661 & 0.748 & 0.702 & 0.794 & 0.863 & 0.827 & 0.581 & 0.508 & 0.542 \\
+pam                  & 0.624 & 0.841 & 1.72 & 0.639 & 0.784 & 0.704 & 0.801 & 0.885 & 0.841 & 0.651 & 0.626 & 0.638 \\
+svm                  & 0.543 & 0.849 & 1.62 & 0.630 & 0.817 & 0.711 & 0.809 & 0.893 & 0.849 & 0.437 & 0.803 & 0.566 \\
+threshold\_cc        & 0.506 & 0.811 & 1.92 & 0.520 & 0.858 & 0.648 & 0.733 & 0.909 & 0.811 & 0.394 & 0.818 & 0.532 \\
+louvain              & 0.506 & 0.811 & 1.92 & 0.520 & 0.858 & 0.648 & 0.733 & 0.909 & 0.811 & 0.394 & 0.818 & 0.532 \\
+label\_prop          & 0.506 & 0.811 & 1.92 & 0.520 & 0.858 & 0.648 & 0.733 & 0.909 & 0.811 & 0.394 & 0.818 & 0.532 \\
+leiden               & 0.000 & 0.686 & 5.18 & 1.000 & 0.065 & 0.122 & 1.000 & 0.522 & 0.686 & 0.000 & 0.000 & 0.000 \\
+gc$^*$               & 0.000 & 0.000 & 5.65 & 0.040 & 1.000 & 0.077 & 0.000 & 1.000 & 0.000 & 0.039 & 1.000 & 0.076 \\
+\midrule
+\textit{final}       & 0.746 & 0.855 & 1.54 & 0.651 & 0.849 & 0.737 & 0.804 & 0.912 & 0.855 & 0.712 & 0.808 & 0.757 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{Metrics: ARI = Adjusted Rand Index; NMI = Normalized Mutual Information;
+VI = Variation of Information (lower is better); B$^3$ = B-cubed; V = V-measure;
+PF = Pairwise F-score; Hom.\ = Homogeneity; Com.\ = Completeness.
+$^*$gc failed with a dimension mismatch error (degenerate fallback).}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Final Cluster Assignment}
+
+The \texttt{final} strategy correctly selected \textbf{hclust\_avg} --- the best-performing method
+(ARI = 0.746). The merge selection bug present in the original run has been fixed.
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Total clusters:} 50
+  \item \textbf{Records:} 1,879
+  \item \textbf{Mean cluster size:} 37.6
+\end{itemize}
+
+50 clusters from 1,879 records is a well-partitioned result, compared to the original buggy run
+which collapsed all records into just 5 mega-clusters ($\approx$900 records each). The current
+partition is compact and discriminative, reflecting the high-ARI hclust\_avg solution.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Method-by-Method Interpretation}
+
+\subsection*{hclust\_avg (Best --- ARI = 0.746)}
+The strongest result, and the correct \texttt{final} selection. Average-linkage hierarchical
+clustering on CORA's 15-field similarity matrix produces a well-balanced partition:
+B$^3$-precision 0.651, recall 0.849, PairF 0.757. The high recall reflects average-link's
+tendency to grow clusters by absorbing nearby records, which works well here because CORA
+duplicates share many field similarities and form dense sub-graphs. The 50-cluster solution
+(mean 37.6 records) is a plausible partition for a dataset of 1,879 citations covering a
+moderate number of distinct papers.
+
+\subsection*{PAM (ARI = 0.624)}
+A strong second place. Partitioning Around Medoids at auto-tuned $k$ finds compact, medoid-centred
+clusters that score well across all metrics (B$^3$-F 0.704, PairF 0.638). PAM is more
+conservative than hclust\_avg --- slightly lower recall (0.784 vs.\ 0.849) but higher precision
+(0.639 vs.\ 0.651 --- near-tie). A good choice when cluster compactness matters.
+
+\subsection*{SVM (ARI = 0.543)}
+Third place overall. SVM learns a supervised decision boundary and achieves the best VI (1.62)
+among all methods. Precision (0.630) and recall (0.817) are well-balanced. It is outperformed by
+hclust\_avg (+0.203 ARI) and PAM (+0.081 ARI) in this run, suggesting that the 15-field equal-weight
+similarity score provides a stronger signal for hierarchical and centroidal methods than for the
+SVM boundary learner at this scale.
+
+\subsection*{Threshold-CC / Louvain / Label Propagation (Identical --- ARI = 0.506)}
+All three converge to exactly the same solution. Good robustness signal but lower ARI than
+the top three methods. Their higher recall (0.858) trades precision (0.520) against the
+hclust/pam family. At the default threshold of 0.5, graph methods may be over-linking records.
+
+\subsection*{Leiden (Degenerate --- ARI = 0.000)}
+Perfect homogeneity (1.0) but near-zero completeness (0.065) and zero ARI. Leiden
+over-partitions at the default resolution --- splits each true entity into many tiny sub-clusters.
+Needs a lower resolution parameter (try 0.05--0.2).
+
+\subsection*{GC --- Graph Coloring (Failed --- ARI = 0.000)}
+Runtime error: dimension mismatch in the GCMER interface. Fell back to degenerate output.
+This is a recurring bug across all datasets that needs fixing.
+
+\subsection*{hclust\_ward (ARI = 0.524)}
+Solid fourth place. Ward linkage is more conservative than average-link --- lower recall (0.748)
+but higher precision (0.661). The ARI gap vs.\ hclust\_avg (0.746 vs.\ 0.524) is notable and
+suggests average-link better suits CORA's citation graph structure.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Key Findings}
+
+\begin{enumerate}[leftmargin=*, label=\arabic*.]
+  \item \textbf{Best method is hclust\_avg} (ARI = 0.746). Average-linkage hierarchical clustering
+        outperforms all other methods on CORA, including SVM (0.543) and PAM (0.624). This is the
+        strongest result across all ERBOT benchmarks to date.
+
+  \item \textbf{Hierarchical and centroidal methods dominate on CORA.} The top three methods are
+        hclust\_avg (0.746), PAM (0.624), and SVM (0.543) --- all of which build more structured
+        cluster representations than the graph-based threshold-CC family (0.506). CORA's dense
+        15-field similarity matrix provides enough information for these methods to find fine-grained
+        partitions.
+
+  \item \textbf{The \texttt{final} merge is now correct.} After fixing the merge selection bug,
+        \texttt{final} correctly identifies hclust\_avg and reports ARI = 0.746. The original buggy
+        run reported \texttt{final} ARI = 0.067 (same method, degenerate 5-cluster output).
+
+  \item \textbf{Graph-based methods are consistent but not the best here.} Threshold-CC, Louvain,
+        and Label Propagation all converge to ARI = 0.506. Good robustness signal, but the 15-field
+        matrix gives richer signal to hierarchical/centroidal methods.
+
+  \item \textbf{Equal weights leave room for improvement.} With 15 fields, ARI-based weight learning
+        could further improve hclust\_avg and SVM --- \texttt{title} and \texttt{authors} are far
+        more discriminative than \texttt{note} or \texttt{tech}.
+
+  \item \textbf{Leiden and GC remain broken.} Leiden ARI = 0 (over-partitioning); GC fails with a
+        dimension mismatch error. Neither contributes usable results without fixing.
+
+  \item \textbf{Blocking is effective.} 92.2\% reduction with prefix-3 on \texttt{title} is
+        appropriate for bibliographic data where title prefixes are stable across duplicates.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Recommendations for Next Steps}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{cp{0.78\linewidth}}
+\toprule
+\textbf{Priority} & \textbf{Action} \\
+\midrule
+{\color{highprio}\textbf{High}}   & Switch from equal weights to supervised ARI-based weights (\texttt{weights="ari"}) --- likely to push hclust\_avg and SVM above 0.80 ARI. \\[4pt]
+{\color{highprio}\textbf{High}}   & Fix GC dimension mismatch error --- it fails silently across all datasets. \\[4pt]
+{\color{medprio}\textbf{Medium}}  & Tune Leiden resolution parameter (try 0.05--0.2) to prevent over-splitting. \\[4pt]
+{\color{medprio}\textbf{Medium}}  & Add pair completeness logging to Stage 3 output (infrastructure is in \texttt{er\_block\_stats()}, just needs printing). \\[4pt]
+{\color{lowprio}\textbf{Low}}     & Try field-specific similarity methods (Jaro-Winkler for \texttt{authors}/\texttt{title}, exact for \texttt{year}) rather than auto-detected uniform similarity. \\[4pt]
+{\color{lowprio}\textbf{Low}}     & Try SN blocking (window = 40) instead of prefix-3 --- may recover some true matches with corrupted title prefixes. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Output Files}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{File} & \textbf{Description} \\
+\midrule
+\texttt{er\_performance.csv}        & Full metric table (10 methods $\times$ 13 metrics) \\
+\texttt{er\_predictions.csv}        & Final cluster assignments (1,879 records $\times$ 2 columns) \\
+\texttt{cora\_data\_profile.pdf}    & Dataset profile: field types, distributions, missingness \\
+\texttt{plot\_method\_comparison.pdf} & Grouped bar chart: ARI, B$^3$-F, NMI per method \\
+\texttt{plot\_performance\_heatmap.pdf} & Colour heatmap: all metrics $\times$ all methods \\
+\texttt{plot\_cluster\_sizes.pdf}   & Cluster size distribution histogram \\
+\texttt{plot\_precision\_recall.pdf} & Precision vs.\ Recall scatter (B-cubed and Pair-F) \\
+\texttt{CORA\_RESULTS\_SUMMARY.pdf} & This document \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}
