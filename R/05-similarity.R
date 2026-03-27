@@ -234,20 +234,34 @@ er_similarity <- function(data, pairs, spec = NULL, diag = NULL) {
 
     switch(ftype,
 
+      # Vectorised: stringdist() accepts two equal-length character vectors and
+      # computes element-wise distances — no per-pair function call overhead.
       "jw" = {
-        col_c <- as.character(col)
-        col_c[col_c == ""] <- NA_character_
-        vapply(seq_len(n_pairs), function(k)
-          .sim_jw(col_c[idx1[k]], col_c[idx2[k]]), numeric(1L))
+        col_c  <- as.character(col); col_c[col_c == ""] <- NA_character_
+        a_vals <- col_c[idx1]; b_vals <- col_c[idx2]
+        mask   <- !is.na(a_vals) & !is.na(b_vals)
+        result <- rep(NA_real_, n_pairs)
+        if (any(mask))
+          result[mask] <- 1 - stringdist::stringdist(
+            a_vals[mask], b_vals[mask], method = "jw")
+        result
       },
 
       "lv" = {
-        col_c <- as.character(col)
-        col_c[col_c == ""] <- NA_character_
-        vapply(seq_len(n_pairs), function(k)
-          .sim_lv(col_c[idx1[k]], col_c[idx2[k]]), numeric(1L))
+        col_c  <- as.character(col); col_c[col_c == ""] <- NA_character_
+        a_vals <- col_c[idx1]; b_vals <- col_c[idx2]
+        mask   <- !is.na(a_vals) & !is.na(b_vals)
+        result <- rep(NA_real_, n_pairs)
+        if (any(mask)) {
+          a_m  <- a_vals[mask]; b_m <- b_vals[mask]
+          lens <- pmax(nchar(a_m), nchar(b_m))
+          dists <- stringdist::stringdist(a_m, b_m, method = "lv")
+          result[mask] <- ifelse(lens > 0L, 1 - dists / lens, NA_real_)
+        }
+        result
       },
 
+      # Jaccard and BoW require per-pair set operations; keep scalar vapply.
       "jaccard" = {
         col_c <- as.character(col)
         col_c[col_c == ""] <- NA_character_
@@ -263,22 +277,36 @@ er_similarity <- function(data, pairs, spec = NULL, diag = NULL) {
           .sim_bow(col_c[idx1[k]], col_c[idx2[k]], idf), numeric(1L))
       },
 
+      # Vectorised: exact string equality is natively vectorised in R.
       "categorical" = {
-        col_c <- as.character(col)
-        vapply(seq_len(n_pairs), function(k)
-          .sim_categorical(col_c[idx1[k]], col_c[idx2[k]]), numeric(1L))
+        col_c  <- as.character(col)
+        a_vals <- col_c[idx1]; b_vals <- col_c[idx2]
+        result <- as.numeric(a_vals == b_vals)
+        result[is.na(a_vals) | is.na(b_vals)] <- NA_real_
+        result
       },
 
+      # Vectorised: arithmetic and exp() are already vectorised.
       "numeric" = {
-        rng <- num_ranges[[fname]]
-        tau <- sp$tau %||% 1
-        vapply(seq_len(n_pairs), function(k)
-          .sim_numeric(col[idx1[k]], col[idx2[k]], rng, tau), numeric(1L))
+        rng    <- num_ranges[[fname]]
+        tau    <- sp$tau %||% 1
+        a_vals <- as.numeric(col[idx1]); b_vals <- as.numeric(col[idx2])
+        mask   <- !is.na(a_vals) & !is.na(b_vals) &
+                  is.finite(rng) & rng > 0
+        result <- rep(NA_real_, n_pairs)
+        if (any(mask))
+          result[mask] <- exp(-abs(a_vals[mask] - b_vals[mask]) / (rng * tau))
+        result
       },
 
       "year" = {
-        vapply(seq_len(n_pairs), function(k)
-          .sim_year(col[idx1[k]], col[idx2[k]]), numeric(1L))
+        a_vals <- suppressWarnings(as.numeric(col[idx1]))
+        b_vals <- suppressWarnings(as.numeric(col[idx2]))
+        mask   <- !is.na(a_vals) & !is.na(b_vals)
+        result <- rep(NA_real_, n_pairs)
+        if (any(mask))
+          result[mask] <- as.numeric(abs(a_vals[mask] - b_vals[mask]) <= 1)
+        result
       },
 
       # Unknown type: all NA

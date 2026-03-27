@@ -110,19 +110,23 @@ er_run <- function(
 
   # ── Stage 3: Block ────────────────────────────────────────────────────────
   .msg("[er_run] Stage 3: blocking...")
-  block_method <- if (is.list(block)) block$method %||% "auto" else block
-  block_key    <- if (is.list(block)) block$key    %||% NULL   else NULL
-  prefix_len   <- if (is.list(block)) block$prefix_len %||% 3L else 3L
-  sn_window    <- if (is.list(block)) block$sn_window  %||% 40L else 40L
+  block_method <- if (is.list(block)) block$method    %||% "auto" else block
+  block_key    <- if (is.list(block)) block$key       %||% NULL   else NULL
+  prefix_len   <- if (is.list(block)) block$prefix_len %||% 3L    else 3L
+  sn_window    <- if (is.list(block)) block$sn_window  %||% 40L   else 40L
+  max_pairs    <- if (is.list(block)) block$max_pairs  %||% 2e6   else 2e6
 
   pairs <- er_block(df, diag = diag, method = block_method,
                     block_key = block_key, prefix_len = prefix_len,
-                    sn_window = sn_window)
+                    sn_window = sn_window, max_pairs = max_pairs)
   .msg(sprintf("  %s candidate pairs generated.",
                format(nrow(pairs), big.mark = ",")))
 
+  truth_for_block <- if (!is.null(truth)) {
+    tryCatch(er_truth_from_any(truth), error = function(e) NULL)
+  } else NULL
   block_stats <- er_block_stats(pairs, n,
-                                truth = if (!is.null(truth)) truth else NULL,
+                                truth  = truth_for_block,
                                 id_vec = id_vec)
 
   # ── Stage 4: Similarity ───────────────────────────────────────────────────

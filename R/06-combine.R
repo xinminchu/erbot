@@ -210,7 +210,7 @@ er_weights <- function(sim_list, pairs = NULL, truth = NULL, id_vec = NULL,
     has_truth <- !is.na(gold_vec)
 
     .ari_of_field <- function(sv) {
-      if (!requireNamespace("aricode", quietly = TRUE)) {
+      if (!requireNamespace("GCMER", quietly = TRUE)) {
         # Fallback: variance proxy
         v <- sv[!is.na(sv)]
         return(if (length(v) < 2L) 0 else stats::var(v))
@@ -230,7 +230,7 @@ er_weights <- function(sim_list, pairs = NULL, truth = NULL, id_vec = NULL,
       labelled_idx <- which(has_truth)[seq_len(min(500L, sum(has_truth)))]
       pred  <- cl[labelled_idx]
       truth_sub <- gold_vec[labelled_idx]
-      tryCatch(aricode::ARI(pred, truth_sub), error = function(e) 0)
+      tryCatch(GCMER::adj_rand(pred, truth_sub), error = function(e) 0)
     }
 
     w <- vapply(sim_list, .ari_of_field, numeric(1L))

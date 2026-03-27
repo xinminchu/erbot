@@ -22,10 +22,10 @@
     idx <- blocks[[i]]
     m   <- length(idx)
     if (m < 2L) next
-    # all pairs within block
-    gr  <- expand.grid(a = seq_len(m), b = seq_len(m))
-    gr  <- gr[gr$a < gr$b, , drop = FALSE]
-    pi  <- idx[gr$a]; pj <- idx[gr$b]
+    # combn() directly generates the upper-triangle pairs (C(m,2) rows)
+    # without the intermediate m^2 matrix that expand.grid() would create.
+    comb <- combn(m, 2L)
+    pi   <- idx[comb[1L, ]]; pj <- idx[comb[2L, ]]
     total <- total + length(pi)
     if (total > max_pairs) {
       warning(sprintf(
@@ -57,16 +57,24 @@
   ord <- order(sort_key, method = "radix", na.last = TRUE)
   n   <- length(ord)
   win <- max(1L, as.integer(window))
-  is <- integer(0); js <- integer(0)
+
+  # Pre-allocate output vectors to avoid O(n^2) memory copies from c() in loop.
+  # Each position pairs with at most `win` subsequent positions.
+  # Cap pre-allocation at 20M entries to prevent runaway allocation on huge inputs.
+  est  <- max(1L, as.integer(min(as.numeric(n - 1L) * win, 2e7)))
+  is   <- integer(est)
+  js   <- integer(est)
+  k    <- 0L
+
   for (pos in seq_len(n - 1L)) {
     i    <- ord[pos]
     jmax <- min(n, pos + win)
-    for (q in (pos + 1L):jmax) {
-      if (q > n) break
-      is <- c(is, i)
-      js <- c(js, ord[q])
+    for (q in seq.int(pos + 1L, jmax)) {
+      k     <- k + 1L
+      is[k] <- i
+      js[k] <- ord[q]
     }
-    if (length(is) > max_pairs) {
+    if (k > max_pairs) {
       warning(sprintf(
         "er_block (sn): pair budget exceeded. Truncating at %s pairs.",
         format(max_pairs, big.mark = ",")
@@ -74,7 +82,7 @@
       break
     }
   }
-  tibble::tibble(idx1 = as.integer(is), idx2 = as.integer(js))
+  tibble::tibble(idx1 = is[seq_len(k)], idx2 = js[seq_len(k)])
 }
 
 # ── er_block() ────────────────────────────────────────────────────────────────
@@ -183,7 +191,7 @@ er_block <- function(data,
       key_vec <- tolower(stringi::stri_trans_nfkc(key_vec))
       p   <- max(1L, as.integer(prefix_len))
       pfx <- substr(key_vec, 1L, p)
-      pfx[pfx == ""] <- "\x00"   # separate group for missing
+      pfx[pfx == ""] <- "__MISSING__"   # separate group for missing
       .pairs_from_blocks(pfx, max_pairs)
     },
 

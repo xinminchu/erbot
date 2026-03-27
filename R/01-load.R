@@ -73,39 +73,77 @@ er_load <- function(data, sheet = NULL) {
   key <- trimws(tolower(data))
 
   # ── Built-in benchmarks ──────────────────────────────────────────────────────
-  if (key == "cora") {
-    if (!requireNamespace("cora", quietly = TRUE))
-      stop("Package 'cora' not installed. Install with: install.packages('cora')")
-    df <- tibble::as_tibble(get("cora", envir = asNamespace("cora")))
-    names(df) <- tolower(names(df))
-    return(df)
-  }
-
-  .load_extdata <- function(fname) {
-    # Try inst/extdata in the installed package first, then relative path.
+  # Helper: locate a bundled dataset file.
+  # Search order: (1) installed inst/extdata, (2) dev inst/extdata,
+  # (3) dev data/ directory (where large files live during development).
+  .find_file <- function(extdata_name, data_candidates = character()) {
     pkg_path <- tryCatch(
-      system.file("extdata", fname, package = "erbot", mustWork = FALSE),
+      system.file("extdata", extdata_name, package = "erbot", mustWork = FALSE),
       error = function(e) ""
     )
     if (nchar(pkg_path) > 0 && file.exists(pkg_path)) return(pkg_path)
-    # Development fallback: look relative to this file
-    here <- tryCatch(normalizePath(file.path(dirname(sys.frame(0)$ofile), "..")),
-                     error = function(e) ".")
-    p <- file.path(here, "inst", "extdata", fname)
+    here <- tryCatch(
+      normalizePath(file.path(dirname(sys.frame(0)$ofile), "..")),
+      error = function(e) "."
+    )
+    p <- file.path(here, "inst", "extdata", extdata_name)
     if (file.exists(p)) return(p)
-    stop("Built-in dataset '", fname, "' not found. ",
-         "Re-install erbot or supply the file path directly.")
+    for (nm in data_candidates) {
+      p2 <- file.path(here, "data", nm)
+      if (file.exists(p2)) return(p2)
+    }
+    stop("Built-in dataset not found (tried: ", extdata_name, ", ",
+         paste(data_candidates, collapse = ", "), "). ",
+         "Supply the file path directly.")
+  }
+
+  if (key == "cora") {
+    # Prefer CSV file (data/cora.csv) parsed from CORA.xml; fall back to R package.
+    csv_path <- tryCatch(.find_file("cora.csv", c("cora.csv")), error = function(e) NULL)
+    if (!is.null(csv_path)) {
+      df <- tibble::as_tibble(data.table::fread(csv_path, showProgress = FALSE))
+      names(df) <- tolower(names(df))
+      return(df)
+    }
+    if (!requireNamespace("cora", quietly = TRUE))
+      stop("Package 'cora' not installed and data/cora.csv not found.")
+    df <- tibble::as_tibble(get("cora", envir = asNamespace("cora")))
+    names(df) <- tolower(names(df))
+    if ("book title" %in% names(df))
+      names(df)[names(df) == "book title"] <- "booktitle"
+    return(df)
   }
 
   if (key == "affiliation") {
-    path <- .load_extdata("affiliation.csv")
+    path <- .find_file("affiliation.csv",
+                       c("affiliationstrings_ids.csv", "affiliation.csv"))
     df   <- tibble::as_tibble(data.table::fread(path, showProgress = FALSE))
-    names(df) <- tolower(names(df)); return(df)
+    names(df) <- tolower(names(df))
+    # Normalise column names produced by the raw ids file (id1 / affil1).
+    if ("id1"    %in% names(df) && !"id"          %in% names(df))
+      names(df)[names(df) == "id1"]    <- "id"
+    if ("affil1" %in% names(df))
+      names(df)[names(df) == "affil1"] <- "affiliation"
+    return(df)
   }
+
   if (key == "d10k") {
-    path <- .load_extdata("d10k.csv")
-    df   <- tibble::as_tibble(data.table::fread(path, showProgress = FALSE))
-    names(df) <- tolower(names(df)); return(df)
+    path <- .find_file("d10k.csv", c("10Kfull.csv", "d10k.csv"))
+    # The file is pipe-delimited and contains multi-line embedding columns.
+    # Select only Id and Aggregate Value (text) to avoid parsing issues.
+    df <- tryCatch(
+      data.table::fread(path, sep = "|",
+                        select = c("Id", "Aggregate Value"),
+                        showProgress = FALSE),
+      error = function(e)
+        data.table::fread(path, sep = "|", select = c(1L, 2L),
+                          showProgress = FALSE)
+    )
+    df <- tibble::as_tibble(df)
+    names(df) <- tolower(gsub("\\s+", "_", trimws(names(df))))
+    if ("aggregate_value" %in% names(df))
+      names(df)[names(df) == "aggregate_value"] <- "text"
+    return(df)
   }
 
   # ── File path ────────────────────────────────────────────────────────────────
@@ -167,18 +205,22 @@ ncvr_guess_fields <- function(df) {
                                                         value = TRUE))))
     if (length(hits)) hits[1] else NA_character_
   }
-  first  <- pick1(c("^first(_|)name$",  "^voter_?first_?name$",  "^first$"))
+  # Patterns cover both standard NCVR column names and the synthetic-partition
+  # naming (givenname / surname / suburb / postcode).
+  first  <- pick1(c("^givenname$", "^given_?name$",
+                    "^first(_|)name$", "^voter_?first_?name$", "^first$"))
   middle <- pick1(c("^middle(_|)name$", "^voter_?middle_?name$", "^middle$",
                     "^mi(ddle)?_?name?$"))
-  last   <- pick1(c("^last(_|)name$",   "^voter_?last_?name$",   "^surname$",
-                    "^last$"))
+  last   <- pick1(c("^surname$", "^last(_|)name$",
+                    "^voter_?last_?name$", "^last$"))
   street <- pick1(c("^res(idence)?_?street(_|)address$", "^res_?addr.*$",
                     "^res_?street.*$", "^address(_1)?$"))
-  city   <- pick1(c("^res(idence)?_?city(_|)(desc)?$", "^res_?city$",
-                    "^city(_desc)?$"))
+  city   <- pick1(c("^suburb$", "^res(idence)?_?city(_|)(desc)?$",
+                    "^res_?city$", "^city(_desc)?$"))
   state  <- pick1(c("^res(idence)?_?state(_|)(cd|code)?$", "^res_?state$",
                     "^state(_cd|_code)?$"))
-  zip    <- pick1(c("^res(idence)?_?zip(_|)(code)?$", "^res_?zip$",
+  zip    <- pick1(c("^postcode$", "^post_?code$",
+                    "^res(idence)?_?zip(_|)(code)?$", "^res_?zip$",
                     "^zip(_code)?$"))
   fields <- c(first, middle, last, street, city, state, zip)
   fields[!is.na(fields)]

@@ -169,9 +169,11 @@ er_merge <- function(cluster_list, S,
 
   # Pick "best" method for transitivity/best strategies
   .pick_best <- function() {
-    if (!is.null(truth_vec) && requireNamespace("aricode", quietly = TRUE)) {
+    if (!is.null(truth_vec) && requireNamespace("GCMER", quietly = TRUE)) {
+      valid <- !is.na(truth_vec)
+      if (sum(valid) < 2L) return(cluster_list[[1L]])
       aris <- vapply(cluster_list, function(labs)
-        tryCatch(aricode::ARI(as.integer(labs), truth_vec),
+        tryCatch(GCMER::adj_rand(as.integer(labs)[valid], truth_vec[valid]),
                  error = function(e) -Inf),
         numeric(1L))
       cluster_list[[which.max(aris)]]

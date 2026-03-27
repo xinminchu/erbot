@@ -645,29 +645,31 @@ er_write_performance <- function(x, file, digits = 5, ...) {
 
 # Cover page: title block + overview stats + field-type bar chart
 .dp_cover <- function(df, diag, flds, title) {
-  old <- graphics::par(mar = c(0, 0, 0, 0))
+  old <- graphics::par(mar = c(1, 3, 1, 2))
   on.exit(graphics::par(old), add = TRUE)
 
   graphics::layout(matrix(c(1, 2, 3), nrow = 3), heights = c(0.18, 0.35, 0.47))
 
   # ---- panel 1: title ----
+  graphics::par(mar = c(1, 3, 1, 2))
   graphics::plot.new()
   graphics::text(0.5, 0.65, title,
-                 cex = 1.9, font = 2, adj = c(0.5, 0.5))
+                 cex = 1.7, font = 2, adj = c(0.5, 0.5))
   graphics::text(0.5, 0.25,
                  paste("Generated:", format(Sys.time(), "%Y-%m-%d %H:%M")),
-                 cex = 0.85, adj = c(0.5, 0.5), col = "gray40")
+                 cex = 0.8, adj = c(0.5, 0.5), col = "gray40")
 
   # ---- panel 2: overview stats text ----
+  graphics::par(mar = c(1, 3, 1, 2))
   graphics::plot.new()
   n_rec   <- if (!is.null(diag)) diag$n        else nrow(df)
   n_col   <- ncol(df)
   mode_   <- if (!is.null(diag)) diag$mode     else "unknown"
   e_pairs <- if (!is.null(diag)) diag$estimated_pairs else NA
-  blk_key <- if (!is.null(diag)) diag$recommended_block_key    else NA
-  blk_met <- if (!is.null(diag)) diag$recommended_block_method else NA
-  src_col <- if (!is.null(diag)) diag$source_col else NA
-  id_col  <- if (!is.null(diag)) diag$id_col     else NA
+  blk_key <- if (!is.null(diag) && length(diag$recommended_block_key)    > 0) diag$recommended_block_key    else NA
+  blk_met <- if (!is.null(diag) && length(diag$recommended_block_method) > 0) diag$recommended_block_method else NA
+  src_col <- if (!is.null(diag) && length(diag$source_col) > 0) diag$source_col else NA
+  id_col  <- if (!is.null(diag) && length(diag$id_col)     > 0) diag$id_col     else NA
 
   lines <- c(
     sprintf("Records       : %s", format(n_rec,  big.mark = ",")),
@@ -679,24 +681,26 @@ er_write_performance <- function(x, file, digits = 5, ...) {
     if (!is.na(blk_key)) sprintf("Block key      : %s", blk_key) else NULL,
     if (!is.na(blk_met)) sprintf("Block method   : %s", blk_met) else NULL
   )
-  graphics::text(0.05, 0.92, paste(lines, collapse = "\n"),
-                 adj = c(0, 1), cex = 0.95, family = "mono")
+  graphics::text(0.02, 0.95, paste(lines, collapse = "\n"),
+                 adj = c(0, 1), cex = 0.88, family = "mono")
 
   # ---- panel 3: field-type bar chart ----
   if (!is.null(flds) && nrow(flds) > 0 && "type" %in% names(flds)) {
     type_counts <- sort(table(flds$type), decreasing = TRUE)
+    max_lab     <- max(nchar(names(type_counts)))
+    left_mar    <- max(6, ceiling(max_lab * 0.7))
     cols <- grDevices::hcl.colors(length(type_counts), palette = "Set2")
-    old2 <- graphics::par(mar = c(4, 6, 3, 1))
-    on.exit(graphics::par(old2), add = TRUE)
+    graphics::par(mar = c(4, left_mar, 3, 2))
     graphics::barplot(type_counts,
-                      horiz    = TRUE,
-                      las      = 1,
-                      col      = cols,
-                      xlab     = "Number of fields",
-                      main     = "Field types",
-                      cex.names = 0.85,
-                      cex.axis  = 0.8)
+                      horiz     = TRUE,
+                      las       = 1,
+                      col       = cols,
+                      xlab      = "Number of fields",
+                      main      = "Field types",
+                      cex.names = 0.82,
+                      cex.axis  = 0.78)
   } else {
+    graphics::par(mar = c(1, 3, 1, 2))
     graphics::plot.new()
     graphics::text(0.5, 0.5, "(no field diagnosis available)",
                    cex = 0.85, col = "gray50", adj = c(0.5, 0.5))
@@ -707,7 +711,7 @@ er_write_performance <- function(x, file, digits = 5, ...) {
 
 # Per-field page: info text + distribution chart + missingness bar
 .dp_field_page <- function(col, frow, top_k_cats = 10L, hist_bins = 20L) {
-  old <- graphics::par(mar = c(0, 0, 0, 0))
+  old <- graphics::par(mar = c(1, 3, 1, 2))
   on.exit(graphics::par(old), add = TRUE)
 
   graphics::layout(matrix(c(1, 2, 3), nrow = 3), heights = c(0.28, 0.57, 0.15))
@@ -721,10 +725,11 @@ er_write_performance <- function(x, file, digits = 5, ...) {
   fname    <- if (!is.null(frow) && "name" %in% names(frow)) frow$name else "field"
 
   # ---- panel 1: field info ----
+  graphics::par(mar = c(1, 3, 1, 2))
   graphics::plot.new()
   graphics::text(0.5, 0.97,
                  sprintf("Field: %s", fname),
-                 adj = c(0.5, 1), cex = 1.3, font = 2)
+                 adj = c(0.5, 1), cex = 1.2, font = 2)
   info_lines <- c(
     sprintf("Type            : %s", ftype),
     sprintf("Missingness     : %.1f%%", miss_pct * 100),
@@ -733,12 +738,12 @@ er_write_performance <- function(x, file, digits = 5, ...) {
     if (!is.na(sim_meth)) sprintf("Similarity method: %s", sim_meth) else NULL,
     sprintf("Blocking candidate: %s", if (isTRUE(blk_cand)) "yes" else "no")
   )
-  graphics::text(0.05, 0.72, paste(info_lines, collapse = "\n"),
-                 adj = c(0, 1), cex = 0.88, family = "mono")
+  graphics::text(0.02, 0.75, paste(info_lines, collapse = "\n"),
+                 adj = c(0, 1), cex = 0.84, family = "mono")
 
   # ---- panel 2: distribution chart ----
   non_miss <- col[!is.na(col)]
-  old2 <- graphics::par(mar = c(4, 4, 2, 1))
+  old2 <- graphics::par(mar = c(4, 5, 2, 2))
   on.exit(graphics::par(old2), add = TRUE)
 
   if (length(non_miss) == 0L) {
@@ -760,17 +765,20 @@ er_write_performance <- function(x, file, digits = 5, ...) {
     graphics::hist(word_counts, breaks = hist_bins, col = "#B2D8B2", border = "white",
                    main = "Word-count distribution", xlab = "Words per value", ylab = "Count")
   } else {
-    # categorical: top-k bar chart
+    # categorical: top-k bar chart — widen left margin for long labels
     tbl <- sort(table(as.character(non_miss)), decreasing = TRUE)
     tbl <- utils::head(tbl, top_k_cats)
+    max_lab  <- max(nchar(names(tbl)), 1L)
+    left_mar <- max(5, min(20, ceiling(max_lab * 0.55)))
     cols <- grDevices::hcl.colors(length(tbl), palette = "Pastel1")
+    graphics::par(mar = c(4, left_mar, 2, 2))
     graphics::barplot(tbl, horiz = TRUE, las = 1, col = cols,
                       main = sprintf("Top %d values", length(tbl)),
-                      xlab = "Count", cex.names = 0.75, cex.axis = 0.8)
+                      xlab = "Count", cex.names = 0.72, cex.axis = 0.78)
   }
 
   # ---- panel 3: missingness bar ----
-  old3 <- graphics::par(mar = c(1, 4, 1, 1))
+  old3 <- graphics::par(mar = c(1, 3, 1, 2))
   on.exit(graphics::par(old3), add = TRUE)
   graphics::barplot(
     rbind(miss_pct, 1 - miss_pct),
@@ -829,8 +837,8 @@ er_write_performance <- function(x, file, digits = 5, ...) {
     }
   }
 
-  graphics::text(0.03, 0.88, paste(lines, collapse = "\n"),
-                 adj = c(0, 1), cex = 0.82, family = "mono")
+  graphics::text(0.02, 0.88, paste(lines, collapse = "\n"),
+                 adj = c(0, 1), cex = 0.78, family = "mono")
 }
 
 

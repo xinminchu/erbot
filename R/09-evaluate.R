@@ -197,7 +197,7 @@ er_pairwise_f <- function(pred, truth) {
 #' Computes ARI (via GCMER), NMI, VI (both via GCMER \code{mutual_info()}),
 #' B-cubed (P/R/F), Homogeneity, Completeness, V-measure, and pairwise F for
 #' each method in \code{pred_list}.  GCMER is the primary source for ARI, NMI,
-#' and VI; \code{aricode} and \code{mclust} are used as fallbacks for ARI only.
+#' and VI; \code{mclust} is used as a fallback for ARI if GCMER is unavailable.
 #'
 #' @param pred_list Named list of integer label vectors, or a single integer
 #'   vector.
@@ -256,12 +256,10 @@ er_evaluate <- function(pred_list,
   rows <- lapply(names(pred_list), function(mname) {
     labs <- as.integer(pred_list[[mname]])[eval_idx]
 
-    # ── ARI: GCMER primary, aricode / mclust fallback ──────────────────────
+    # ── ARI: GCMER primary, mclust fallback ─────────────────────────────────
     ari_val <- tryCatch({
       if (requireNamespace("GCMER", quietly = TRUE))
         GCMER::adj_rand(labs, gold_sub)
-      else if (requireNamespace("aricode", quietly = TRUE))
-        aricode::ARI(labs, gold_sub)
       else if (requireNamespace("mclust", quietly = TRUE))
         mclust::adjustedRandIndex(labs, gold_sub)
       else NA_real_

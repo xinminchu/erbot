@@ -49,8 +49,8 @@
         D <- er_cosine_dist(X)
         stats::cutree(stats::hclust(stats::as.dist(D), method = "average"), k = k)
       }
-      if (requireNamespace("aricode", quietly = TRUE))
-        tryCatch(aricode::ARI(labs, truth_vec), error = function(e) -Inf)
+      if (requireNamespace("GCMER", quietly = TRUE))
+        tryCatch(GCMER::adj_rand(labs, truth_vec), error = function(e) -Inf)
       else -Inf
     }, numeric(1L))
     k_grid[which.max(scores)]
@@ -133,6 +133,11 @@
 }
 
 #' Rebuild a sparse similarity matrix from predicted pair probabilities
+#' @param i_vec Integer vector of first-record indices.
+#' @param j_vec Integer vector of second-record indices.
+#' @param probs Numeric vector of match probabilities in \eqn{[0,1]}.
+#' @param n Integer. Total number of records (matrix dimension).
+#' @return Symmetric \code{dgCMatrix} of size \eqn{n \times n}.
 #' @keywords internal
 .probs_to_sparse <- function(i_vec, j_vec, probs, n) {
   Matrix::sparseMatrix(
@@ -423,8 +428,8 @@ er_cluster_all <- function(S,
         ents <- as.matrix(res_gc$ents)
         if (!is.null(truth_vec)) {
           aris <- vapply(seq_len(ncol(ents)), function(j) {
-            if (requireNamespace("aricode", quietly = TRUE))
-              tryCatch(aricode::ARI(as.integer(ents[, j]), truth_vec),
+            if (requireNamespace("GCMER", quietly = TRUE))
+              tryCatch(GCMER::adj_rand(as.integer(ents[, j]), truth_vec),
                        error = function(e) -Inf)
             else -Inf
           }, numeric(1L))
