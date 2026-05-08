@@ -27,8 +27,8 @@ install.packages(c(
 install.packages("aricode")                 # ARI and related external metrics
 remotes::install_github("ddegras/GCMER")    # agreement metrics & graph coloring
 
-# Install erbot (replace with your GitHub path)
-remotes::install_github("YOUR_GITHUB_USER/erbot", upgrade = "never")
+# Install erbot
+remotes::install_github("xinminchu/erbot", upgrade = "never")
 
 R ≥ 4.1 recommended.
 
