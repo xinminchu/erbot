@@ -1,6 +1,6 @@
 Package: erbot
 Title: ERBOT: A Unified Entity Resolution Pipeline
-Version: 0.2.0
+Version: 0.3.0
 Authors@R: 
     c(person("Xinmin", "Chu", , "Xinmin.Chu001@umb.edu", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0001-5140-3852")),
@@ -17,6 +17,11 @@ Description: End-to-end entity resolution (deduplication and record linkage) via
     similarity, adaptive weighted combination (Fellegi-Sunter or ARI weights),
     multiple clustering methods (HC, PAM, Louvain, Leiden, Graph Coloring),
     consensus merging, and evaluation by ARI and B-cubed F-score.
+    Includes a full ablation framework comparing weight conditions
+    (uniform, Fellegi-Sunter EM, full-data ARI, CV-learned ARI) and blocking
+    conditions (no-block vs blocked), plus wrappers for external deep learning
+    baselines (DeepMatcher, Ditto/BERT) and probabilistic baselines (Splink)
+    via Python system calls.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -45,7 +50,8 @@ Imports:
     grDevices,
     gridExtra,
     scales,
-    magrittr
+    magrittr,
+    jsonlite
 Suggests:
     mclust,
     aricode,
@@ -57,6 +63,8 @@ Suggests:
     RSpectra,
     peakRAM,
     dbscan,
-    textreuse
+    textreuse,
+    knitr,
+    rmarkdown
 Remotes:
     ddegras/GCMER
