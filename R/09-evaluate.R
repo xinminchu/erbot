@@ -1,8 +1,8 @@
 ########################################
 # File: R/09-evaluate.R
-# Evaluation: ARI, NMI, VI (via GCMER), B-cubed P/R/F, Homogeneity,
-# Completeness, V-measure, Pairwise F (for compatibility).
-# Primary metrics: ARI, NMI, B-cubed F.
+# Evaluation: ARI, AMI, NMI, VI (via GCMER/aricode), B-cubed P/R/F,
+# Homogeneity, Completeness, V-measure, Pairwise F (for compatibility).
+# Primary metrics (handbook): ARI, B-cubed F1, V-measure, AMI.
 # Pairwise F is reported for comparison with prior published results only.
 #
 # Truth ingestion (from 22-eval-truth.R) is also here.
@@ -52,14 +52,12 @@ er_truth_from_any <- function(truth, sep_pair = "\\|",
                           cluster_id = as.integer(truth)))
   if (is.character(truth) && length(truth) == 1L) {
     ext <- tolower(tools::file_ext(truth))
-    if (ext %in% c("csv","tsv","txt","psv"))
-      truth <- readr::read_delim(truth,
-                                  delim = if (ext == "tsv") "\t" else ",",
-                                  show_col_types = FALSE, guess_max = 1e6)
-    else if (ext %in% c("xlsx","xls"))
+    if (ext %in% c("xlsx", "xls"))
       truth <- readxl::read_excel(truth)
     else
-      truth <- data.table::fread(truth, showProgress = FALSE)
+      # data.table::fread auto-detects separator (handles comma, semicolon, tab)
+      truth <- tibble::as_tibble(
+        data.table::fread(truth, showProgress = FALSE, data.table = FALSE))
   }
   if (is.data.frame(truth)) {
     names(truth) <- tolower(names(truth))
@@ -74,6 +72,30 @@ er_truth_from_any <- function(truth, sep_pair = "\\|",
              dplyr::distinct(id, .keep_all = TRUE))
   }
   stop("Unsupported truth type.")
+}
+
+# ── NMI / VI from the contingency table (BUG-06 fallback) ─────────────────────
+
+# Computes harmonic-mean NMI (Fred & Jain: 2*I / (Hx + Hy); equals
+# aricode::NMI(..., variant = "sum")) and the Variation of Information
+# (VI = Hx + Hy - 2*I, natural log) directly from table(a, b).
+# No package dependency. Returns c(NMI = ..., VI = ...).
+.er_nmi_vi <- function(a, b) {
+  tab <- table(a, b)
+  n   <- sum(tab)
+  if (n < 2L) return(c(NMI = NA_real_, VI = NA_real_))
+  m   <- as.matrix(tab) / n
+  pi_ <- rowSums(m)
+  pj_ <- colSums(m)
+  Hx  <- -sum(pi_[pi_ > 0] * log(pi_[pi_ > 0]))
+  Hy  <- -sum(pj_[pj_ > 0] * log(pj_[pj_ > 0]))
+  po  <- outer(pi_, pj_)
+  nz  <- m > 0
+  I   <- sum(m[nz] * log(m[nz] / po[nz]))
+  I   <- max(0, I)                       # guard tiny negative rounding
+  vi  <- max(0, Hx + Hy - 2 * I)
+  nmi <- if ((Hx + Hy) > 0) 2 * I / (Hx + Hy) else 1  # both partitions trivial
+  c(NMI = nmi, VI = vi)
 }
 
 # ── B-cubed ───────────────────────────────────────────────────────────────────
@@ -166,6 +188,33 @@ er_vmeasure <- function(pred, truth) {
   list(H = homogeneity, C = completeness, V = vmeasure)
 }
 
+# ── AMI ──────────────────────────────────────────────────────────────────────
+
+#' Adjusted Mutual Information
+#'
+#' Chance-corrected information-theoretic metric.
+#' \eqn{AMI = (I - E[I]) / (0.5(H(T) + H(C)) - E[I])}, where the
+#' expectation is under the hypergeometric model (Vinh et al., 2010).
+#' Delegates to \pkg{aricode} if available; falls back to \code{NA} otherwise.
+#'
+#' @param pred Integer vector of predicted cluster labels.
+#' @param truth Integer vector of true cluster labels.
+#' @return Numeric scalar in \eqn{[-1, 1]}, or \code{NA} if \pkg{aricode}
+#'   is not installed.
+#' @references Vinh, N. X., Epps, J., & Bailey, J. (2010). Information
+#'   theoretic measures for clusterings comparison. \emph{JMLR}, 11,
+#'   2837--2854.
+#' @export
+er_ami <- function(pred, truth) {
+  pred  <- as.integer(pred)
+  truth <- as.integer(truth)
+  if (requireNamespace("aricode", quietly = TRUE))
+    tryCatch(aricode::AMI(pred, truth), error = function(e) NA_real_)
+  else
+    NA_real_
+}
+
+
 # ── Pairwise F (for compatibility) ────────────────────────────────────────────
 
 #' Pairwise Precision, Recall, and F-measure
@@ -194,10 +243,10 @@ er_pairwise_f <- function(pred, truth) {
 
 #' Evaluate clustering results against ground truth
 #'
-#' Computes ARI (via GCMER), NMI, VI (both via GCMER \code{mutual_info()}),
-#' B-cubed (P/R/F), Homogeneity, Completeness, V-measure, and pairwise F for
-#' each method in \code{pred_list}.  GCMER is the primary source for ARI, NMI,
-#' and VI; \code{mclust} is used as a fallback for ARI if GCMER is unavailable.
+#' Computes ARI (via GCMER), AMI (via \pkg{aricode}), NMI, VI (both via GCMER
+#' \code{mutual_info()}), B-cubed (P/R/F), Homogeneity, Completeness,
+#' V-measure, and pairwise F for each method in \code{pred_list}.
+#' Primary metrics (experiment handbook): ARI, B-cubed F, V-measure, AMI.
 #'
 #' @param pred_list Named list of integer label vectors, or a single integer
 #'   vector.
@@ -209,7 +258,7 @@ er_pairwise_f <- function(pred, truth) {
 #'   records before evaluation.
 #'
 #' @return A tibble with one row per method and columns:
-#'   \code{method}, \code{ARI}, \code{NMI}, \code{VI},
+#'   \code{method}, \code{ARI}, \code{AMI}, \code{NMI}, \code{VI},
 #'   \code{Bcubed_P}, \code{Bcubed_R}, \code{Bcubed_F},
 #'   \code{Homogeneity}, \code{Completeness}, \code{Vmeasure},
 #'   \code{PairF_P}, \code{PairF_R}, \code{PairF_F}.
@@ -265,15 +314,30 @@ er_evaluate <- function(pred_list,
       else NA_real_
     }, error = function(e) NA_real_)
 
-    # ── NMI (harmonic) and VI: GCMER mutual_info() ─────────────────────────
+    # ── AMI: aricode primary ─────────────────────────────────────────────────
+    ami_val <- tryCatch(er_ami(labs, gold_sub), error = function(e) NA_real_)
+
+    # ── NMI (harmonic / Fred & Jain) and VI ──────────────────────────────────
+    # BUG-06 fix (2026-06-12): the previous implementation relied exclusively
+    # on GCMER::mutual_info(), which is not installed in this environment, so
+    # NMI and VI were always NA. Order now: (1) GCMER if present and finite,
+    # (2) direct contingency-table computation (.er_nmi_vi; no dependency;
+    # NMI variant = 2I/(Hx+Hy), identical to aricode::NMI(variant = "sum")).
     nmi_val <- NA_real_
     vi_val  <- NA_real_
     if (requireNamespace("GCMER", quietly = TRUE)) {
       mi_res <- tryCatch(GCMER::mutual_info(labs, gold_sub),
                          error = function(e) NULL)
       if (!is.null(mi_res)) {
-        nmi_val <- as.numeric(mi_res["FJ"])   # harmonic-mean NMI (Fred & Jain)
-        vi_val  <- as.numeric(mi_res["VI"])   # Variation of Information
+        nmi_val <- suppressWarnings(as.numeric(mi_res["FJ"]))
+        vi_val  <- suppressWarnings(as.numeric(mi_res["VI"]))
+      }
+    }
+    if (!is.finite(nmi_val) || !is.finite(vi_val)) {
+      mi_direct <- tryCatch(.er_nmi_vi(labs, gold_sub), error = function(e) NULL)
+      if (!is.null(mi_direct)) {
+        if (!is.finite(nmi_val)) nmi_val <- mi_direct[["NMI"]]
+        if (!is.finite(vi_val))  vi_val  <- mi_direct[["VI"]]
       }
     }
 
@@ -287,6 +351,7 @@ er_evaluate <- function(pred_list,
     tibble::tibble(
       method       = mname,
       ARI          = round(ari_val,  4),
+      AMI          = round(ami_val,  4),
       NMI          = round(nmi_val,  4),
       VI           = round(vi_val,   4),
       Bcubed_P     = round(b3$P,     4),

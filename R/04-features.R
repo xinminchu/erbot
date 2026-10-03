@@ -1,5 +1,4 @@
 ########################################
-# File: D:/erbot/R/04-features.R
 ########################################
 
 #' Parse a column of serialized embeddings to a numeric matrix

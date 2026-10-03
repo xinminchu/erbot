@@ -218,3 +218,77 @@ er_normalize_text <- function(x) {
   x[x == ""] <- " "
   x
 }
+
+# ── Wave 1 infrastructure helpers (2026-06-12, BUGFIX_EXECUTION_PLAN) ──────────
+
+#' Peak R heap probe (corrected memory measurement)
+#'
+#' Returns the cumulative "max used" R heap in MB since the last
+#' \code{gc(reset = TRUE)} (sum of the Ncells and Vcells max-used columns).
+#' Replaces the invalid retained-allocation probe with the spurious
+#' \code{* 1024L} factor (BUG-01).  Usage pattern:
+#' \preformatted{
+#'   gc(reset = TRUE); base <- er_gc_peak_mb()
+#'   ... work ...
+#'   peak_mb <- er_gc_peak_mb() - base
+#' }
+#' Note: measures the current R process only; PSOCK worker memory is
+#' invisible to this probe (use an OS-level sampler for parallel workers).
+#'
+#' @return Numeric scalar, MB.
+#' @keywords internal
+er_gc_peak_mb <- function() {
+  g <- gc(verbose = FALSE)
+  sum(g[, 6L])
+}
+
+#' Non-destructive CSV writer for experiment outputs
+#'
+#' Refuses to overwrite an existing file (BUG-18).  If \code{path} exists and
+#' overwrite is not explicitly enabled (argument or environment variable
+#' \code{ERBOT_OVERWRITE=1}), the data is written instead to a timestamped
+#' sibling directory \code{<dir>/rerun_<YYYYmmdd_HHMMSS>/<file>} and a message
+#' is emitted.  Returns the path actually written (invisibly).
+#'
+#' @param x Data frame to write.
+#' @param path Intended output path.
+#' @param overwrite Logical; default honours \code{ERBOT_OVERWRITE}.
+#' @keywords internal
+er_safe_write_csv <- function(x, path,
+                              overwrite = identical(Sys.getenv("ERBOT_OVERWRITE"), "1")) {
+  if (file.exists(path) && !isTRUE(overwrite)) {
+    stamp   <- format(Sys.time(), "%Y%m%d_%H%M%S")
+    alt_dir <- file.path(dirname(path), paste0("rerun_", stamp))
+    dir.create(alt_dir, showWarnings = FALSE, recursive = TRUE)
+    alt <- file.path(alt_dir, basename(path))
+    message("er_safe_write_csv: '", path, "' exists; writing to '", alt,
+            "' instead (set ERBOT_OVERWRITE=1 to overwrite in place).")
+    utils::write.csv(x, alt, row.names = FALSE)
+    return(invisible(alt))
+  }
+  utils::write.csv(x, path, row.names = FALSE)
+  invisible(path)
+}
+
+#' Evaluate an expression with a locally seeded RNG
+#'
+#' Sets the seed for the duration of \code{expr} and restores the caller's
+#' global RNG state afterwards (BUG-19).  Sampling inside \code{expr} is
+#' identical to a plain \code{set.seed(seed)} call, so results are backward
+#' compatible; only the side effect on the caller's RNG stream is removed.
+#'
+#' @param seed Integer seed.
+#' @param expr Expression to evaluate.
+#' @return Value of \code{expr}.
+#' @keywords internal
+er_with_seed <- function(seed, expr) {
+  has_old <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  old <- if (has_old) get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  on.exit({
+    if (has_old) assign(".Random.seed", old, envir = globalenv())
+    else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
+      rm(".Random.seed", envir = globalenv())
+  }, add = TRUE)
+  set.seed(seed)
+  expr
+}

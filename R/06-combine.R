@@ -7,6 +7,37 @@
 # er_weights()  -- weight learning (auto / supervised / unsupervised)
 ########################################
 
+# ── Internal: single-field ARI helper ─────────────────────────────────────────
+
+# Compute ARI between threshold-CC clusters derived from one field's
+# similarity vector and the ground truth.  Used by er_weights(method="ari")
+# in both the standard (single-pass) and nested-CV code paths.
+# Returns a numeric in [-1, 1], or 0 on failure / insufficient data.
+.ari_per_field <- function(sv, pairs_sub, has_truth_sub, gold_vec_sub) {
+  if (!requireNamespace("GCMER", quietly = TRUE)) {
+    v <- sv[!is.na(sv)]
+    return(if (length(v) < 2L) 0 else stats::var(v))
+  }
+  ok <- !is.na(sv) &
+    has_truth_sub[pairs_sub$idx1] & has_truth_sub[pairs_sub$idx2]
+  if (sum(ok) < 2L) return(0)
+  p1    <- pairs_sub$idx1[ok]
+  p2    <- pairs_sub$idx2[ok]
+  sv_ok <- sv[ok]
+  thr  <- stats::median(sv_ok, na.rm = TRUE)
+  g_df <- data.frame(from = p1[sv_ok >= thr], to = p2[sv_ok >= thr])
+  if (!nrow(g_df)) return(0)
+  n_nodes <- max(pairs_sub$idx1, pairs_sub$idx2)
+  g <- igraph::graph_from_data_frame(
+    g_df, directed = FALSE,
+    vertices = data.frame(name = seq_len(n_nodes)))
+  cl      <- igraph::components(g)$membership
+  lbl_idx <- which(has_truth_sub)[seq_len(min(500L, sum(has_truth_sub)))]
+  tryCatch(GCMER::adj_rand(cl[lbl_idx], gold_vec_sub[lbl_idx]),
+           error = function(e) 0)
+}
+
+
 # ── er_combine() ──────────────────────────────────────────────────────────────
 
 #' NA-aware adaptive weighted similarity combination
@@ -18,7 +49,7 @@
 #' \code{na_fill} (default 0).
 #'
 #' This is the reference implementation given by Prof.\ Degras-Valabregue
-#' (\texttt{impute\_dist\_weights.R}), adapted to the pair-list representation.
+#' (\code{impute_dist_weights.R}), adapted to the pair-list representation.
 #'
 #' @param sim_list Named list of numeric vectors (output of
 #'   \code{er_similarity()}), one per field.
@@ -88,11 +119,19 @@ er_combine <- function(sim_list, weights = NULL, na_fill = 0) {
 #'   (id, cluster_id) of ground truth.
 #' @param id_vec Character vector of record IDs (aligned to row indices).
 #' @param method Character or numeric vector. Default \code{"auto"}.
+#' @param inner_k Integer or \code{NULL}. When \code{method = "ari"}, setting
+#'   \code{inner_k >= 2} enables nested inner CV: the current training split is
+#'   further divided into \code{inner_k} entity-disjoint folds, per-field ARI
+#'   is estimated on each inner training portion, and the final weight is the
+#'   average.  This prevents target leakage when ARI is both the weight loss
+#'   and the outer evaluation metric.  Recommended: \code{inner_k = 4}.
+#'   Default \code{NULL} (no inner CV).
+#' @param seed Integer. RNG seed for inner-fold creation. Default \code{42L}.
 #'
 #' @return Named numeric vector of weights summing to 1.
 #' @export
 er_weights <- function(sim_list, pairs = NULL, truth = NULL, id_vec = NULL,
-                       method = "auto") {
+                       method = "auto", inner_k = NULL, seed = 42L) {
 
   fnames <- names(sim_list)
   K      <- length(fnames)
@@ -195,56 +234,53 @@ er_weights <- function(sim_list, pairs = NULL, truth = NULL, id_vec = NULL,
     return(w / s)
   }
 
-  # ── ARI-based (supervised) ───────────────────────────────────────────────────
+  # ── ARI-based (supervised) ────────────────────────────────────────────────────
   if (method == "ari") {
     if (is.null(truth)) stop("er_weights method='ari' requires 'truth'.")
     if (is.null(pairs)) stop("er_weights method='ari' requires 'pairs'.")
 
-    # Parse truth into id -> cluster_id map
-    if (is.vector(truth) && !is.null(names(truth))) {
-      truth_tbl <- tibble::tibble(id = as.character(names(truth)),
-                                  cluster_id = as.integer(truth))
-    } else if (is.data.frame(truth)) {
-      truth_tbl <- truth; names(truth_tbl) <- tolower(names(truth_tbl))
-    } else {
-      stop("er_weights: unsupported truth format.")
-    }
+    truth_tbl <- er_truth_from_any(truth)
     truth_map <- setNames(as.integer(truth_tbl$cluster_id),
                           as.character(truth_tbl$id))
-
     if (is.null(id_vec)) id_vec <- as.character(seq_len(max(pairs$idx2)))
-    gold_vec <- truth_map[id_vec]  # NA for unlabelled records
-
-    # Only evaluate on pairs where both records have a truth label
+    gold_vec  <- truth_map[id_vec]
     has_truth <- !is.na(gold_vec)
+    n_records <- length(id_vec)
 
-    .ari_of_field <- function(sv) {
-      if (!requireNamespace("GCMER", quietly = TRUE)) {
-        # Fallback: variance proxy
-        v <- sv[!is.na(sv)]
-        return(if (length(v) < 2L) 0 else stats::var(v))
-      }
-      # Build threshold-CC clusters for this field on labelled pairs
-      ok  <- !is.na(sv) & has_truth[pairs$idx1] & has_truth[pairs$idx2]
-      if (sum(ok) < 2L) return(0)
-      p1  <- pairs$idx1[ok]; p2 <- pairs$idx2[ok]; sv_ok <- sv[ok]
-      thr <- stats::median(sv_ok, na.rm = TRUE)  # simple median threshold
-      # connected components
-      g_df <- data.frame(from = p1[sv_ok >= thr], to = p2[sv_ok >= thr])
-      if (!nrow(g_df)) return(0)
-      n_nodes <- max(pairs$idx1, pairs$idx2)
-      g  <- igraph::graph_from_data_frame(g_df, directed = FALSE,
-                                           vertices = data.frame(name = seq_len(n_nodes)))
-      cl <- igraph::components(g)$membership
-      labelled_idx <- which(has_truth)[seq_len(min(500L, sum(has_truth)))]
-      pred  <- cl[labelled_idx]
-      truth_sub <- gold_vec[labelled_idx]
-      tryCatch(GCMER::adj_rand(pred, truth_sub), error = function(e) 0)
+    # ── Nested inner CV (prevents ARI target leakage) ─────────────────────────
+    if (!is.null(inner_k) && as.integer(inner_k) >= 2L) {
+      inner_folds <- er_split(id_vec = id_vec, truth = truth_tbl,
+                              k = as.integer(inner_k),
+                              entity_disjoint = TRUE,
+                              seed = seed + 1L)
+      fold_w_mat <- vapply(inner_folds, function(fold_info) {
+        tr_idx    <- fold_info$train_idx
+        keep      <- pairs$idx1 %in% tr_idx & pairs$idx2 %in% tr_idx
+        sub_pairs <- pairs[keep, , drop = FALSE]
+        loc_map   <- integer(n_records)
+        loc_map[tr_idx] <- seq_along(tr_idx)
+        sub_pairs$idx1  <- loc_map[sub_pairs$idx1]
+        sub_pairs$idx2  <- loc_map[sub_pairs$idx2]
+        sub_gold  <- gold_vec[tr_idx]
+        sub_has_t <- !is.na(sub_gold)
+        vapply(lapply(sim_list, `[`, keep),
+               function(sv) .ari_per_field(sv, sub_pairs, sub_has_t, sub_gold),
+               numeric(1L))
+      }, numeric(K))
+      # fold_w_mat is K x inner_k; rowMeans averages across inner folds
+      w <- rowMeans(pmax(0, fold_w_mat), na.rm = TRUE)
+      names(w) <- fnames
+      s <- sum(w)
+      if (s <= 0) return(setNames(rep(1 / K, K), fnames))
+      return(w / s)
     }
 
-    w <- vapply(sim_list, .ari_of_field, numeric(1L))
+    # ── Standard single-pass ARI weighting ────────────────────────────────────
+    w <- vapply(sim_list,
+                function(sv) .ari_per_field(sv, pairs, has_truth, gold_vec),
+                numeric(1L))
     w <- pmax(0, w)
-    names(w) <- fnames   # pmax() drops names; restore before passing to er_combine
+    names(w) <- fnames
     s <- sum(w)
     if (s <= 0) return(setNames(rep(1 / K, K), fnames))
     return(w / s)

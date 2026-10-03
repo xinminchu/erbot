@@ -94,7 +94,8 @@
     res$u %*% diag(res$d, nrow = d, ncol = d)
   }, error = function(e) {
     # fallback: random projection
-    set.seed(42L); matrix(stats::rnorm(n * 2L), n, 2L)
+    # BUG-19 (2026-06-12): locally seeded; caller RNG state preserved.
+    er_with_seed(42L, matrix(stats::rnorm(n * 2L), n, 2L))
   })
 }
 

@@ -17,6 +17,102 @@
 # er_delta_ari: ARI_A - ARI_B (the leakage/overfitting gap).
 ########################################
 
+# ── er_split() ────────────────────────────────────────────────────────────────
+
+#' Create K entity-disjoint (or record-level) CV folds
+#'
+#' Splits \code{n} records into \code{k} folds for cross-validation.
+#' When \code{entity_disjoint = TRUE} (default), all records of the same
+#' true entity are placed in the same fold, preventing information leakage
+#' across folds.  Fold sizes are balanced by assigning entities greedily
+#' (largest entities first, each assigned to the fold with fewest records).
+#'
+#' @param id_vec Character vector of record IDs (length n).
+#' @param truth Ground truth accepted by \code{\link{er_truth_from_any}}:
+#'   named integer vector, \code{tibble(id, cluster_id)}, file path, or
+#'   \code{NULL}.  Required when \code{entity_disjoint = TRUE}.
+#' @param k Integer. Number of folds. Default \code{5L}.
+#' @param entity_disjoint Logical. If \code{TRUE} (default), entities are
+#'   assigned as units; no entity spans two folds.  If \code{FALSE}, records
+#'   are assigned independently at random.
+#' @param seed Integer. RNG seed. Default \code{42L}.
+#'
+#' @return A list of \code{k} elements, each a list with:
+#'   \describe{
+#'     \item{fold}{Integer fold index (1..k).}
+#'     \item{train_idx}{Integer vector: indices of training records in \code{id_vec}.}
+#'     \item{test_idx}{Integer vector: indices of test records in \code{id_vec}.}
+#'   }
+#' @export
+er_split <- function(id_vec, truth = NULL, k = 5L, entity_disjoint = TRUE,
+                     seed = 42L) {
+  k <- as.integer(k)
+  n <- length(id_vec)
+  if (k < 2L || k > n)
+    stop(sprintf("er_split: k must be between 2 and n=%d.", n))
+
+  # BUG-19 (2026-06-12): preserve the caller's global RNG state. The same
+  # set.seed(seed) still runs, so all sampling inside this function is
+  # byte-identical to previous behaviour; only the side effect on the
+  # caller's RNG stream is removed.
+  .rng_old <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
+    get(".Random.seed", envir = globalenv(), inherits = FALSE) else NULL
+  on.exit({
+    if (!is.null(.rng_old)) {
+      assign(".Random.seed", .rng_old, envir = globalenv())
+    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      rm(".Random.seed", envir = globalenv())
+    }
+  }, add = TRUE)
+  set.seed(seed)
+
+  if (!entity_disjoint || is.null(truth)) {
+    fold_assign <- sample(rep(seq_len(k), length.out = n))
+    return(lapply(seq_len(k), function(f) {
+      test_idx <- which(fold_assign == f)
+      list(fold = f, train_idx = setdiff(seq_len(n), test_idx),
+           test_idx = test_idx)
+    }))
+  }
+
+  # Entity-disjoint: assign whole entities to folds ───────────────────────────
+  truth_tbl        <- er_truth_from_any(truth)
+  id_to_idx        <- setNames(seq_len(n), id_vec)
+  labelled         <- truth_tbl[truth_tbl$id %in% id_vec, , drop = FALSE]
+  labelled$rec_idx <- id_to_idx[as.character(labelled$id)]
+
+  entity_groups <- split(labelled$rec_idx, labelled$cluster_id)
+  sizes         <- lengths(entity_groups)
+  ord           <- order(sizes, decreasing = TRUE)   # largest entities first
+  entity_groups <- entity_groups[ord]
+  sizes         <- sizes[ord]
+
+  # Greedy: each entity goes to the fold with the fewest records so far
+  fold_counts  <- integer(k)
+  entity_folds <- integer(length(entity_groups))
+  for (i in seq_along(entity_groups)) {
+    f               <- which.min(fold_counts)
+    entity_folds[i] <- f
+    fold_counts[f]  <- fold_counts[f] + sizes[i]
+  }
+
+  fold_assign <- integer(n)
+  for (i in seq_along(entity_groups))
+    fold_assign[entity_groups[[i]]] <- entity_folds[i]
+
+  # Unlabelled records (singletons not in truth): assign randomly
+  unlab <- which(fold_assign == 0L)
+  if (length(unlab))
+    fold_assign[unlab] <- sample(rep(seq_len(k), length.out = length(unlab)))
+
+  lapply(seq_len(k), function(f) {
+    test_idx <- which(fold_assign == f)
+    list(fold = f, train_idx = setdiff(seq_len(n), test_idx),
+         test_idx = test_idx)
+  })
+}
+
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 #' Default method grid for er_grid_sweep

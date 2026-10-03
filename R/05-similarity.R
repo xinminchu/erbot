@@ -341,3 +341,92 @@ er_pairs_to_sparse <- function(pairs, sim_vec, n, na_fill = 0) {
   sim_vec[is.na(sim_vec)] <- na_fill
   er_sparse_from_pairs(pairs$idx1, pairs$idx2, sim_vec, n)
 }
+
+
+# ── er_inject_missing() ───────────────────────────────────────────────────────
+
+#' Inject artificial missingness into a similarity list (Exp 4)
+#'
+#' Masks entries of each per-field similarity vector to \code{NA} at a target
+#' marginal rate \code{rho} under one of two mechanisms:
+#' \describe{
+#'   \item{MCAR}{Each observed entry \eqn{S_k(i,j)} is masked independently
+#'     with probability \eqn{\rho} (missing completely at random).}
+#'   \item{MAR}{Entry \eqn{S_k(i,j)} is masked with probability proportional
+#'     to \eqn{1 - S_k(i,j)} (low-similarity pairs more likely missing),
+#'     scaled so the marginal masking rate equals \eqn{\rho}.  If all
+#'     observed similarities equal 1, falls back to MCAR.}
+#' }
+#' Entries already \code{NA} in \code{sim_list} are left unchanged; additional
+#' masking is applied only to currently observed entries.
+#'
+#' @param sim_list Named list of numeric vectors (output of
+#'   \code{er_similarity()}), one per field.
+#' @param rho Numeric in \eqn{[0, 1]}.  Target marginal missingness rate
+#'   applied to all fields unless overridden by \code{field_rho}.
+#' @param mechanism Character. \code{"MCAR"} (default) or \code{"MAR"}.
+#' @param field_rho Optional named numeric vector of per-field rates.  Names
+#'   must match names in \code{sim_list}.  Overrides \code{rho} for the
+#'   named fields; unnamed fields use the global \code{rho}.
+#' @param seed Integer. RNG seed for reproducibility. Default \code{42L}.
+#'
+#' @return A list with the same structure as \code{sim_list}, with additional
+#'   entries masked to \code{NA}.
+#' @export
+er_inject_missing <- function(sim_list, rho,
+                              mechanism = c("MCAR", "MAR"),
+                              field_rho = NULL,
+                              seed      = 42L) {
+  mechanism <- match.arg(mechanism)
+  if (rho < 0 || rho > 1)
+    stop("er_inject_missing: rho must be in [0, 1].")
+  if (!is.null(field_rho) && any(field_rho < 0 | field_rho > 1, na.rm = TRUE))
+    stop("er_inject_missing: all values in field_rho must be in [0, 1].")
+
+  # BUG-19 (2026-06-12): preserve the caller's global RNG state. The same
+  # set.seed(seed) still runs, so all sampling inside this function is
+  # byte-identical to previous behaviour; only the side effect on the
+  # caller's RNG stream is removed.
+  .rng_old <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
+    get(".Random.seed", envir = globalenv(), inherits = FALSE) else NULL
+  on.exit({
+    if (!is.null(.rng_old)) {
+      assign(".Random.seed", .rng_old, envir = globalenv())
+    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      rm(".Random.seed", envir = globalenv())
+    }
+  }, add = TRUE)
+  set.seed(seed)
+
+  result <- lapply(names(sim_list), function(fname) {
+    sv    <- sim_list[[fname]]
+    rho_k <- if (!is.null(field_rho) && fname %in% names(field_rho))
+                field_rho[[fname]]
+              else
+                rho
+    if (rho_k == 0) return(sv)
+
+    obs <- which(!is.na(sv))
+    if (!length(obs)) return(sv)
+
+    if (mechanism == "MCAR") {
+      mask_idx <- obs[stats::runif(length(obs)) < rho_k]
+    } else {
+      # MAR: p(i,j) proportional to (1 - S_k(i,j)), scaled to marginal rho_k
+      sv_obs  <- sv[obs]
+      raw_wt  <- pmax(0, 1 - sv_obs)
+      mean_wt <- mean(raw_wt, na.rm = TRUE)
+      if (mean_wt <= 0) {
+        mask_idx <- obs[stats::runif(length(obs)) < rho_k]
+      } else {
+        p_ij     <- pmin(1, rho_k * raw_wt / mean_wt)
+        mask_idx <- obs[stats::runif(length(obs)) < p_ij]
+      }
+    }
+
+    sv[mask_idx] <- NA_real_
+    sv
+  })
+  names(result) <- names(sim_list)
+  result
+}

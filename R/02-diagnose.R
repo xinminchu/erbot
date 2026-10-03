@@ -5,6 +5,37 @@
 # exported for expert inspection.
 ########################################
 
+# ── Truth / label column guard (BUG-22 fix, 2026-06-12) ───────────────────────
+
+# Column names that encode ground truth (entity / cluster / class / match id).
+# These must NEVER enter the similarity pipeline: a label column scores a
+# perfect similarity on every true match, leaking the answer into the features.
+# See BUG22_LEAKAGE_ANALYSIS.md.
+.ER_LABEL_COLS <- c(
+  "cluster_id", "class", "entity_id", "label", "truth",
+  "gold", "gold_id", "match_id",
+  # common synonyms seen in ER benchmarks
+  "cluster", "entityid", "clusterid", "true_id", "trueid",
+  "gold_cluster", "gold_label", "ground_truth", "groundtruth", "y", "target"
+)
+
+#' Is a column name a ground-truth / label column?
+#'
+#' Case-insensitive, punctuation-insensitive match against a curated list of
+#' label-column names (\code{.ER_LABEL_COLS}).  Used by \code{er_diagnose()}
+#' to keep truth columns out of the similarity feature set (BUG-22).
+#'
+#' @param name Character vector of column names.
+#' @param extra Optional character vector of additional label names to treat
+#'   as truth columns.
+#' @return Logical vector, same length as \code{name}.
+#' @keywords internal
+.er_is_label_column <- function(name, extra = character(0)) {
+  norm <- function(x) gsub("[^a-z0-9]", "", tolower(as.character(x)))
+  targets <- norm(c(.ER_LABEL_COLS, extra))
+  norm(name) %in% targets
+}
+
 # ── Field type detection ───────────────────────────────────────────────────────
 
 #' Detect the type of a single column
@@ -116,6 +147,7 @@ er_diagnose <- function(data,
                                              "embedded ag.value", "emb",
                                              "embedding", "vector",
                                              "embedding_clean"),
+                        label_cols      = NULL,
                         pair_budget     = 1e6) {
 
   df <- tibble::as_tibble(data)
@@ -151,6 +183,23 @@ er_diagnose <- function(data,
   } else {
     analyse_cols <- intersect(tolower(text_cols), names(df))
   }
+
+  # ── BUG-22 guard: never let a ground-truth / label column become a feature ────
+  # A label column (cluster_id, class, entity_id, ...) scores a perfect
+  # similarity on every true match, leaking the answer into the similarity
+  # pipeline. Drop such columns here regardless of how analyse_cols was built,
+  # and report them so the leak is visible. See BUG22_LEAKAGE_ANALYSIS.md.
+  is_label    <- .er_is_label_column(analyse_cols, extra = tolower(label_cols %||% character(0)))
+  label_drops <- analyse_cols[is_label]
+  if (length(label_drops)) {
+    warning("er_diagnose: dropping ground-truth/label column(s) from the ",
+            "similarity field set to prevent leakage (BUG-22): ",
+            paste(label_drops, collapse = ", "),
+            ". Pass label_cols= to extend the list, or text_cols= to control ",
+            "the field set explicitly.")
+    analyse_cols <- analyse_cols[!is_label]
+  }
+
   if (!length(analyse_cols)) {
     warning("er_diagnose: no columns to analyse. Check id_col / text_cols.")
     analyse_cols <- character(0)
@@ -245,7 +294,8 @@ er_diagnose <- function(data,
     estimated_pairs          = est_pairs,
     blocking_needed          = blocking_needed,
     recommended_block_method = rec_block_method,
-    recommended_block_key    = rec_block_key
+    recommended_block_key    = rec_block_key,
+    label_dropped            = label_drops   # BUG-22: truth columns removed
   )
 }
 

@@ -1,5 +1,4 @@
 ########################################
-# File: D:/erbot/R/30-reporting.R
 ########################################
 
 #' Quick base-graphics plot for a tuning curve
@@ -192,7 +191,6 @@ er_gc_top_table <- function(res, top_n=5, metric=NULL){
 #' }
 #' @import ggplot2
 #' @import gridExtra
-#' @import dplyr
 #' @export
 er_save_report_pdf <- function(res,
                                file,
