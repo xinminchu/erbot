@@ -1,3 +1,5 @@
+> **Note (2026-10-03):** this repo now hosts code only. Docs, literature, results, dev snapshots, man pages and data were moved to the private archive `xinminchu/erbot-archive`; active development continues in the private repo `xinminchu/erbotv2`.
+
 # erbot
 **Entity Resolution Pipeline & Utilities (R package)**
 
