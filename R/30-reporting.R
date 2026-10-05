@@ -189,8 +189,6 @@ er_gc_top_table <- function(res, top_n=5, metric=NULL){
 #' er_save_report_pdf(tuned, "results/cora_report.pdf", "CORA",
 #'                    objective="silhouette_penalized", top_n=5)
 #' }
-#' @import ggplot2
-#' @import gridExtra
 #' @export
 er_save_report_pdf <- function(res,
                                file,

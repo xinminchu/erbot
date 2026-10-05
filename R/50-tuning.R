@@ -312,28 +312,67 @@ er_penalize_silhouette <- function(sil, k, n, alpha = NULL) {
   sil - alpha * log(k)
 }
 
-#' @title Stability via bootstrap ARI
+#' @title Stability via repeated-subsample ARI
+#'
+#' B-03 rewrite (2026-10-06): the old implementation split ONE subsample into
+#' two disjoint halves and computed ARI between clusterings of DIFFERENT record
+#' sets, which is meaningless (ARI compares two partitions of the SAME set). It
+#' also initialised the accumulator with 0 so skipped replicates polluted the
+#' mean, and crashed on odd subsample sizes. The rewrite draws TWO independent
+#' subsamples per replicate, clusters each, and computes ARI on their
+#' INTERSECTION -- the standard subsampling-stability design.
+#'
 #' @param Z Numeric matrix \eqn{n \times d} of record embeddings.
-#' @param B Integer. Number of bootstrap replicates. Default \code{10}.
-#' @param frac Numeric. Fraction of records per bootstrap subsample. Default \code{0.8}.
-#' @param fit_fun Function. Clustering function with signature \code{function(Z, ...)}
-#'   returning an integer label vector.
+#' @param B Integer. Number of replicates. Default \code{10}.
+#' @param frac Numeric. Fraction of records per subsample. Default \code{0.8}.
+#' @param fit_fun Function with signature \code{function(X, ...)} returning an
+#'   integer label vector (one label per row of \code{X}). It may additionally
+#'   declare \code{text_sub = NULL} to receive subsampled raw text (for
+#'   text-based methods such as \code{er_mst_edit}).
+#' @param seed Integer or \code{NULL}. Seed for the subsampling, applied in
+#'   local scope (the caller's RNG state is preserved via \code{er_with_seed}).
+#' @param text Optional character vector (length \code{nrow(Z)}) of raw record
+#'   text; subsampled alongside \code{Z} and forwarded to \code{fit_fun} as
+#'   \code{text_sub}.
 #' @param ... Additional arguments passed to \code{fit_fun}.
-#' @return Numeric mean ARI across bootstrap pairs, or \code{NA} if \code{mclust} unavailable.
+#' @return Numeric mean ARI over successful replicates (\code{NA} for failed
+#'   ones); \code{NA_real_} if \code{mclust} is unavailable or fewer than 2
+#'   replicates succeed.
 #' @export
-er_stability_ari <- function(Z, B = 10L, frac = 0.8, fit_fun, ...) {
+er_stability_ari <- function(Z, B = 10L, frac = 0.8, fit_fun,
+                             seed = NULL, text = NULL, ...) {
   if (!er_require("mclust")) return(NA_real_)
-  ARIs <- numeric(B)
-  for (b in seq_len(B)) {
-    idx <- sample.int(nrow(Z), max(2L, floor(frac * nrow(Z))))
-    s1 <- idx[seq_along(idx) %% 2 == 1]
-    s2 <- idx[seq_along(idx) %% 2 == 0]
-    if (length(s1) < 2 || length(s2) < 2) next
-    lab1 <- fit_fun(Z[s1, , drop = FALSE], ...)
-    lab2 <- fit_fun(Z[s2, , drop = FALSE], ...)
-    ARIs[b] <- mclust::adjustedRandIndex(lab1, lab2)
+  n <- nrow(Z)
+  if (is.null(n) || n < 4L) return(NA_real_)
+  if (!is.null(text) && length(text) != n)
+    stop("er_stability_ari: 'text' must have length nrow(Z).")
+  m <- max(2L, floor(frac * n))
+  ARIs <- rep(NA_real_, B)
+
+  run <- function() {
+    for (b in seq_len(B)) {
+      i1 <- sample.int(n, m)
+      i2 <- sample.int(n, m)
+      t1 <- if (is.null(text)) NULL else text[i1]
+      t2 <- if (is.null(text)) NULL else text[i2]
+      lab1 <- tryCatch(fit_fun(Z[i1, , drop = FALSE], text_sub = t1, ...),
+                       error = function(e) NULL)
+      lab2 <- tryCatch(fit_fun(Z[i2, , drop = FALSE], text_sub = t2, ...),
+                       error = function(e) NULL)
+      if (is.null(lab1) || is.null(lab2)) next
+      if (length(lab1) != m || length(lab2) != m) next
+      common <- intersect(i1, i2)
+      if (length(common) < 2L) next
+      l1 <- lab1[match(common, i1)]
+      l2 <- lab2[match(common, i2)]
+      if (any(is.na(l1)) || any(is.na(l2))) next
+      ARIs[b] <<- tryCatch(mclust::adjustedRandIndex(l1, l2),
+                           error = function(e) NA_real_)
+    }
+    if (sum(!is.na(ARIs)) < 2L) return(NA_real_)
+    mean(ARIs, na.rm = TRUE)
   }
-  mean(ARIs, na.rm = TRUE)
+  if (is.null(seed)) run() else er_with_seed(seed, run())
 }
 
 #' @title External metrics (ARI, pairwise F1)
@@ -414,7 +453,7 @@ er_tune <- function(data, fields,
     int <- er_internal_metrics(Z, labels, G = G, sample_n = sample_n_sil)
     ps  <- er_penalize_silhouette(int$silhouette, length(unique(labels)), nrow(Z))
     stab <- if (identical(objective, "stability")) {
-      er_stability_ari(Z, B = stability_B, fit_fun = function(X, ...) {
+      er_stability_ari(Z, B = stability_B, text = txt, fit_fun = function(X, text_sub = NULL, ...) {
         switch(m,
           kmeans = er_kmeans_from_Z(X, k = params$k),
           agglo  = er_agglomerative_cosine(X, k = params$k),
@@ -427,7 +466,10 @@ er_tune <- function(data, fields,
             er_chinese_whispers(Gx, iters = params$iters %||% 20)
           },
           threshold_cc = er_threshold_cc(X, min_sim = params$min_sim, k_knn = params$k_knn),
-          mst_edit = er_mst_edit(params$text, max_dist = params$max_dist)
+          # M-41 fix (2026-10-06): the old code passed params$text, which is
+          # always NULL on this path -> er_mst_edit(NULL) errored. Use the
+          # subsampled raw text forwarded by er_stability_ari instead.
+          mst_edit = er_mst_edit(text_sub, max_dist = params$max_dist)
         )
       })
     } else NA_real_
@@ -610,7 +652,6 @@ er_scaling_curve <- function(data, fields, n_seq,
 #' @importFrom igraph vcount ecount induced_subgraph E modularity is.igraph
 #' @importFrom stats dist
 #' @importFrom cluster silhouette
-#' @importFrom mclust adjustedRandIndex
 er_eval_metrics <- function(
   g                = NULL,
   membership,

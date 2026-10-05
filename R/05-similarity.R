@@ -237,7 +237,7 @@ er_similarity <- function(data, pairs, spec = NULL, diag = NULL) {
       # Vectorised: stringdist() accepts two equal-length character vectors and
       # computes element-wise distances — no per-pair function call overhead.
       "jw" = {
-        col_c  <- as.character(col); col_c[col_c == ""] <- NA_character_
+        col_c  <- as.character(col); col_c[!is.na(col_c) & col_c == ""] <- NA_character_
         a_vals <- col_c[idx1]; b_vals <- col_c[idx2]
         mask   <- !is.na(a_vals) & !is.na(b_vals)
         result <- rep(NA_real_, n_pairs)
@@ -248,7 +248,7 @@ er_similarity <- function(data, pairs, spec = NULL, diag = NULL) {
       },
 
       "lv" = {
-        col_c  <- as.character(col); col_c[col_c == ""] <- NA_character_
+        col_c  <- as.character(col); col_c[!is.na(col_c) & col_c == ""] <- NA_character_
         a_vals <- col_c[idx1]; b_vals <- col_c[idx2]
         mask   <- !is.na(a_vals) & !is.na(b_vals)
         result <- rep(NA_real_, n_pairs)
@@ -264,14 +264,14 @@ er_similarity <- function(data, pairs, spec = NULL, diag = NULL) {
       # Jaccard and BoW require per-pair set operations; keep scalar vapply.
       "jaccard" = {
         col_c <- as.character(col)
-        col_c[col_c == ""] <- NA_character_
+        col_c[!is.na(col_c) & col_c == ""] <- NA_character_
         vapply(seq_len(n_pairs), function(k)
           .sim_jaccard(col_c[idx1[k]], col_c[idx2[k]]), numeric(1L))
       },
 
       "bow" = {
         col_c <- as.character(col)
-        col_c[col_c == ""] <- NA_character_
+        col_c[!is.na(col_c) & col_c == ""] <- NA_character_
         idf <- .bow_idf(col_c)
         vapply(seq_len(n_pairs), function(k)
           .sim_bow(col_c[idx1[k]], col_c[idx2[k]], idf), numeric(1L))

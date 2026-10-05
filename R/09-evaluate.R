@@ -303,7 +303,27 @@ er_evaluate <- function(pred_list,
   gold_sub <- as.integer(gold[eval_idx])
 
   rows <- lapply(names(pred_list), function(mname) {
-    labs <- as.integer(pred_list[[mname]])[eval_idx]
+    pv <- pred_list[[mname]]
+    # B-04 fix (2026-10-06): align predictions to id_vec BY NAME when names
+    # are present. The old code did positional subsetting after as.integer()
+    # (which drops names), so a caller-supplied label vector in a different
+    # record order silently misaligned all 14 metrics.
+    if (!is.null(names(pv))) {
+      if (!setequal(names(pv), id_vec)) {
+        missing <- setdiff(id_vec, names(pv))
+        extra   <- setdiff(names(pv), id_vec)
+        msg_extra <- paste0(
+          if (length(missing)) paste0("; e.g. missing '", missing[1L], "'") else "",
+          if (length(extra))   paste0("; e.g. extra '",   extra[1L],   "'") else "")
+        stop(sprintf("er_evaluate: prediction '%s' ids do not match id_vec (%d missing, %d extra%s).",
+                     mname, length(missing), length(extra), msg_extra))
+      }
+      pv <- pv[id_vec]  # reorder to canonical id_vec order; names now safe to drop
+    } else if (length(pv) != n) {
+      stop(sprintf("er_evaluate: prediction '%s' has length %d, expected %d (records).",
+                   mname, length(pv), n))
+    }
+    labs <- as.integer(pv)[eval_idx]
 
     # ── ARI: GCMER primary, mclust fallback ─────────────────────────────────
     ari_val <- tryCatch({
