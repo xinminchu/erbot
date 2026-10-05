@@ -134,14 +134,16 @@ er_consensus <- function(cluster_list, n, alpha = 0.5) {
 #' @param S Symmetric \code{dgCMatrix} (n × n).
 #' @param method Character. Post-processing strategy:
 #'   \describe{
-#'     \item{\code{"transitivity"}}{Build connected components at
-#'       \code{threshold} on the best single input method (highest ARI if
-#'       truth given, else first method).}
+#'     \item{\code{"transitivity"}}{Connected components at \code{threshold}
+#'       on the similarity matrix \code{S} (unsupervised; ignores
+#'       \code{cluster_list}).}
 #'     \item{\code{"consensus"}}{Majority-vote co-membership across all
-#'       methods (see \code{er_consensus()}).}
+#'       methods (see \code{er_consensus()}); unsupervised.}
 #'     \item{\code{"best"}}{Return the single best method's labels without
-#'       further modification (best = highest ARI if truth provided, else
-#'       first method).}
+#'       further modification. Best = highest ARI when \code{truth_vec} is
+#'       provided -- this is \strong{supervised} method selection and makes
+#'       reported metrics optimistic (a warning is issued). Without truth,
+#'       returns the first method.}
 #'     \item{\code{"none"}}{Return \code{cluster_list[[1]]} unchanged.}
 #'   }
 #' @param threshold Numeric. Similarity threshold for transitivity merge.
@@ -169,17 +171,24 @@ er_merge <- function(cluster_list, S,
 
   # Pick "best" method for transitivity/best strategies
   .pick_best <- function() {
-    if (!is.null(truth_vec) && requireNamespace("GCMER", quietly = TRUE)) {
-      valid <- !is.na(truth_vec)
-      if (sum(valid) < 2L) return(cluster_list[[1L]])
-      aris <- vapply(cluster_list, function(labs)
-        tryCatch(GCMER::adj_rand(as.integer(labs)[valid], truth_vec[valid]),
-                 error = function(e) -Inf),
-        numeric(1L))
-      cluster_list[[which.max(aris)]]
-    } else {
-      cluster_list[[1L]]
+    if (!is.null(truth_vec)) {
+      # Honesty guard (2026-10-06): selecting the method on ground truth is
+      # SUPERVISED model selection. Say so loudly; silent optimistic metrics
+      # are worse than no metrics.
+      warning("er_merge(method='best'): using ground truth to select the clustering method ",
+              "(supervised selection); reported metrics are optimistic. ",
+              "Use merge='consensus' for an unsupervised final clustering.", call. = FALSE)
+      if (requireNamespace("GCMER", quietly = TRUE)) {
+        valid <- !is.na(truth_vec)
+        if (sum(valid) < 2L) return(cluster_list[[1L]])
+        aris <- vapply(cluster_list, function(labs)
+          tryCatch(GCMER::adj_rand(as.integer(labs)[valid], truth_vec[valid]),
+                   error = function(e) -Inf),
+          numeric(1L))
+        return(cluster_list[[which.max(aris)]])
+      }
     }
+    cluster_list[[1L]]
   }
 
   labels <- switch(method,
