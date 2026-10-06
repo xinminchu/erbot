@@ -247,6 +247,21 @@ er_pair_features <- function(sim_list, pairs) {
   yf
 }
 
+# Separation-related numerical chatter from glm.fit / brglmFit is expected on
+# nearly-separated pair data; the validity checks are the real gate and
+# invalid_reason reports the outcome. Muffle only these known messages so
+# anything else (e.g. a malformed y) still surfaces loudly.
+.muffle_separation_warnings <- function(expr) {
+  withCallingHandlers(expr, warning = function(w) {
+    msg <- conditionMessage(w)
+    if (grepl("fitted probabilities numerically 0 or 1 occurred", msg,
+              fixed = TRUE) ||
+        grepl("glm.fit: algorithm did not converge", msg, fixed = TRUE)) {
+      invokeRestart("muffleWarning")
+    }
+  })
+}
+
 .require_pkg <- function(pkg, what) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
     stop(what, " requires package '", pkg, "'. ",
@@ -371,12 +386,12 @@ er_pair_classify <- function(features, y,
     guarded({
       train_df <- as.data.frame(x_interaction, check.names = TRUE)
       train_df$outcome <- y_num
-      fit <- if (use_firth) {
+      fit <- .muffle_separation_warnings(if (use_firth) {
         stats::glm(outcome ~ ., data = train_df, family = stats::binomial(),
                    method = brglm2::brglmFit, type = "AS_mean")
       } else {
         stats::glm(outcome ~ ., data = train_df, family = stats::binomial())
-      }
+      })
       reason <- if (use_firth) .firth_logistic_invalid_reason(fit)
                 else .logistic_invalid_reason(fit)
       if (nzchar(reason)) return(invalid(reason))

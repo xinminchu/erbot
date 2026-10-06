@@ -89,6 +89,15 @@
   n <- nrow(S)
   d <- min(svd_dim, n - 1L, ncol(S) - 1L)
   if (d < 2L) return(matrix(0, n, 2))
+  # irlba rightly complains when asked for a large fraction of the spectrum
+  # ("too large a percentage of total singular values"). Take its advice:
+  # the exact dense SVD is cheaper and exact there. The n <= 5000 cap keeps
+  # this branch to problem sizes where n^2 densification is trivial; beyond
+  # it, an explicitly huge svd_dim stays on irlba with its honest warning.
+  if (n <= 5000L && 3L * d >= n) {
+    s <- svd(as.matrix(S), nu = d, nv = 0)
+    return(s$u %*% diag(s$d[seq_len(d)], nrow = d, ncol = d))
+  }
   tryCatch({
     res <- irlba::irlba(S, nv = d)
     res$u %*% diag(res$d, nrow = d, ncol = d)
@@ -426,7 +435,10 @@ er_cluster_all <- function(S,
   }
 
   n <- nrow(S)
-  if (is.null(X)) X <- .features_from_S(S, svd_dim)
+  # Lazy SVD features: only hclust/PAM consume X. Graph and supervised methods
+  # work straight from S / pair features, so skip the wasted decomposition.
+  if (is.null(X) && any(methods %in% c("hclust_avg", "hclust_ward", "pam")))
+    X <- .features_from_S(S, svd_dim)
 
   results <- list()
   for (m in methods) {
