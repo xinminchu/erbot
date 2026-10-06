@@ -86,11 +86,13 @@ test_that("er_tune: internal objective keeps legacy full-data behaviour", {
 
   df <- data.frame(txt = paste("record", rep(c("aa", "bb"), 10), seq_len(20)),
                    stringsAsFactors = FALSE)
+  # Tiny toy: keep svd_dim below the DTM's min dimension (irlba requirement).
   res <- er_tune(df, "txt",
                  methods = "kmeans",
                  grids = list(kmeans = data.frame(k = 2, nstart = 1)),
                  objective = "silhouette_penalized",
-                 truth = NULL)
+                 truth = NULL,
+                 svd_dim = 2)
   expect_false(res$honest)
   expect_null(res$test_metrics)
   expect_null(res$split)

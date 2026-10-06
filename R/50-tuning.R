@@ -610,7 +610,15 @@ er_tune <- function(data, fields,
   }
   d <- max(2L, min(as.integer(svd_dim), length(txtp) - 1L))
   repeat {
-    out <- tryCatch(er_tfidf_svd(txtp, svd_dim = d), error = function(e) e)
+    out <- withCallingHandlers(
+      tryCatch(er_tfidf_svd(txtp, svd_dim = d), error = function(e) e),
+      # Benign irlba advice ("use a standard svd instead"): we deliberately
+      # start high and halve d on hard errors, so this warning is noise.
+      warning = function(w) {
+        if (grepl("too large a percentage", conditionMessage(w)))
+          invokeRestart("muffleWarning")
+      }
+    )
     if (!inherits(out, "error")) return(out)
     if (d <= 2L) stop("er_tune: embedding failed: ", conditionMessage(out))
     d <- max(2L, floor(d / 2))
