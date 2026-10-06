@@ -68,6 +68,11 @@ Suggests:
     dbscan,
     textreuse,
     knitr,
-    rmarkdown
+    rmarkdown,
+    brglm2,
+    randomForest,
+    MASS,
+    rpart,
+    nnet
 Remotes:
     ddegras/GCMER

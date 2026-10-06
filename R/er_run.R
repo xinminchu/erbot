@@ -187,6 +187,8 @@ er_run <- function(
     threshold    = threshold,
     resolution   = 1,
     truth_vec    = cluster_truth,
+    sim_list     = sim_list,
+    pairs        = pairs,
     verbose      = verbose
   )
   .msg(sprintf("  %d method(s) ran.", length(all_clusters)))
