@@ -52,19 +52,11 @@ er_split <- function(id_vec, truth = NULL, k = 5L, entity_disjoint = TRUE,
   if (k < 2L || k > n)
     stop(sprintf("er_split: k must be between 2 and n=%d.", n))
 
-  # BUG-19 (2026-06-12): preserve the caller's global RNG state. The same
-  # set.seed(seed) still runs, so all sampling inside this function is
-  # byte-identical to previous behaviour; only the side effect on the
-  # caller's RNG stream is removed.
-  .rng_old <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
-    get(".Random.seed", envir = globalenv(), inherits = FALSE) else NULL
-  on.exit({
-    if (!is.null(.rng_old)) {
-      assign(".Random.seed", .rng_old, envir = globalenv())
-    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-      rm(".Random.seed", envir = globalenv())
-    }
-  }, add = TRUE)
+  # RNG discipline (Phase 3, 2026-10-06): preserve the caller's global RNG
+  # state. set.seed(seed) still runs, so sampling inside is byte-identical;
+  # only the side effect on the caller's RNG stream is removed.
+  .rng_restore <- .rng_save()
+  on.exit(.rng_restore(), add = TRUE)
   set.seed(seed)
 
   if (!entity_disjoint || is.null(truth)) {
@@ -262,6 +254,11 @@ er_grid_sweep <- function(sim_list, pairs, n, truth_tbl, id_vec,
                           seed         = 42L,
                           verbose      = TRUE) {
 
+  # RNG discipline (Phase 3): the sweep re-seeds per cell for determinism;
+  # the caller's global RNG state is preserved.
+  .rng_restore <- .rng_save()
+  on.exit(.rng_restore(), add = TRUE)
+
   # tau-invariant methods: run once, replicate
   TAU_INVARIANT <- c("louvain", "leiden", "label_prop", "hclust_avg",
                      "hclust_ward", "pam")
@@ -353,6 +350,10 @@ er_protocol_a <- function(sim_list, pairs, n, truth_tbl, id_vec,
                           weight_method = "ari",
                           seed          = 42L,
                           verbose       = TRUE) {
+
+  # RNG discipline (Phase 3): preserve the caller's global RNG state.
+  .rng_restore <- .rng_save()
+  on.exit(.rng_restore(), add = TRUE)
 
   if (verbose) message("[Protocol A] Full-data sweep...")
   sweep <- er_grid_sweep(sim_list, pairs, n, truth_tbl, id_vec,
@@ -456,6 +457,10 @@ er_protocol_b <- function(sim_list, pairs, n, truth_tbl, id_vec,
                           test_fraction = 0.3,
                           base_seed     = 42L,
                           verbose       = TRUE) {
+
+  # RNG discipline (Phase 3): preserve the caller's global RNG state.
+  .rng_restore <- .rng_save()
+  on.exit(.rng_restore(), add = TRUE)
 
   if (!is.numeric(test_fraction) || length(test_fraction) != 1L ||
       test_fraction <= 0 || test_fraction >= 1) {

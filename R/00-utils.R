@@ -118,6 +118,8 @@ er_pairwise_stringdist <- function(text_vec,
                                    block    = 4000L,
                                    progress = NULL) {
   n <- length(text_vec)
+  # Inherently n x n dense: refuse to OOM (Phase 3).
+  .check_dense_n(n, "the pairwise string-distance matrix")
   if (n == 0L) return(matrix(numeric(0L), 0L, 0L))
   if (n <= block) {
     D <- as.matrix(stringdist::stringdistmatrix(text_vec, text_vec,
@@ -268,6 +270,49 @@ er_safe_write_csv <- function(x, path,
   }
   utils::write.csv(x, path, row.names = FALSE)
   invisible(path)
+}
+
+#' Guard against accidental n x n densification (Phase 3, 2026-10-06).
+#'
+#' Several clustering/evaluation paths need a dense n x n distance matrix
+#' (hclust, PAM, silhouette, GCMER). At n = 10k that is ~800 MB per copy --
+#' an instant OOM on most machines, and hclust is O(n^3) anyway. Fail loudly
+#' with a pointer to sparse-safe alternatives instead of killing the session.
+#' @param n Integer. Number of records.
+#' @param what Character. What is being densified (for the message).
+#' @param max_n Integer. Largest n allowed to densify. Default 5000L.
+#' @keywords internal
+.check_dense_n <- function(n, what = "a dense n x n matrix", max_n = 5000L) {
+  if (n > max_n) {
+    stop(sprintf(
+      paste0("Refusing to build %s for n=%d (needs ~%.1f GB and O(n^2)-O(n^3) ",
+             "compute): certain OOM. Use a sparse-safe method instead ",
+             "(louvain/leiden/label_prop/threshold_cc), or block first to reduce n."),
+      what, n, 8 * n * n / 1024^3))
+  }
+  invisible(NULL)
+}
+
+#' Save the global RNG state; the returned function restores it.
+#'
+#' Pair with \code{on.exit()} before any \code{set.seed()} call:
+#' \preformatted{
+#'   .rng_restore <- .rng_save()
+#'   on.exit(.rng_restore(), add = TRUE)
+#'   set.seed(seed)
+#' }
+#' Same semantics as the inline save/restore pattern used since BUG-19
+#' (2026-06-12); the closure captures the state, so no caller-frame tricks.
+#' @return A zero-argument function that restores the saved RNG state.
+#' @keywords internal
+.rng_save <- function() {
+  has_old <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  old <- if (has_old) get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  function() {
+    if (has_old) assign(".Random.seed", old, envir = globalenv())
+    else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
+      rm(".Random.seed", envir = globalenv())
+  }
 }
 
 #' Evaluate an expression with a locally seeded RNG

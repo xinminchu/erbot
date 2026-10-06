@@ -861,6 +861,9 @@ er_scaling_curve <- function(data, fields, n_seq,
                              method = "kmeans",
                              params_fixed = list(),
                              svd_dim = 200) {
+  # RNG discipline (Phase 3): preserve the caller's global RNG state.
+  .rng_restore <- .rng_save()
+  on.exit(.rng_restore(), add = TRUE)
   set.seed(1)
   stopifnot(all(fields %in% names(data)))
   txt_all <- do.call(paste, c(unname(data[fields]), sep = " "))

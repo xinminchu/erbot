@@ -383,19 +383,11 @@ er_inject_missing <- function(sim_list, rho,
   if (!is.null(field_rho) && any(field_rho < 0 | field_rho > 1, na.rm = TRUE))
     stop("er_inject_missing: all values in field_rho must be in [0, 1].")
 
-  # BUG-19 (2026-06-12): preserve the caller's global RNG state. The same
-  # set.seed(seed) still runs, so all sampling inside this function is
-  # byte-identical to previous behaviour; only the side effect on the
-  # caller's RNG stream is removed.
-  .rng_old <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
-    get(".Random.seed", envir = globalenv(), inherits = FALSE) else NULL
-  on.exit({
-    if (!is.null(.rng_old)) {
-      assign(".Random.seed", .rng_old, envir = globalenv())
-    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-      rm(".Random.seed", envir = globalenv())
-    }
-  }, add = TRUE)
+  # RNG discipline (Phase 3, 2026-10-06): preserve the caller's global RNG
+  # state. set.seed(seed) still runs, so sampling inside is byte-identical;
+  # only the side effect on the caller's RNG stream is removed.
+  .rng_restore <- .rng_save()
+  on.exit(.rng_restore(), add = TRUE)
   set.seed(seed)
 
   result <- lapply(names(sim_list), function(fname) {

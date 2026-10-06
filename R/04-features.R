@@ -42,6 +42,9 @@ er_features_tfidf_svd <- function(text_vec, svd_dim=100){
   dtm <- text2vec::create_dtm(it, vec)
   tfidf <- text2vec::TfIdf$new(); Xtf <- tfidf$fit_transform(dtm)
   k_dim <- max(2L, min(svd_dim, min(dim(Xtf))-1L))
-  set.seed(42); svd_res <- irlba::irlba(Xtf, nv=k_dim)
+  .rng_restore <- .rng_save()
+  on.exit(.rng_restore(), add = TRUE)
+  set.seed(42)
+  svd_res <- irlba::irlba(Xtf, nv=k_dim)
   svd_res$u %*% diag(svd_res$d)
 }

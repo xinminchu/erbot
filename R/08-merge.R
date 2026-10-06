@@ -52,15 +52,19 @@ er_absorb_small <- function(labels, S, m_min = 2L) {
   large_ids <- setdiff(unique(labels), small_ids)
   if (!length(large_ids)) return(labels)
 
-  S_mat <- as.matrix(S)
-
+  # Sparse-safe mean similarity (Phase 3, 2026-10-06): the old code did
+  # as.matrix(S) on the full n x n matrix just to average small sub-blocks.
+  # sum() over the sparse sub-block divided by the block size is exactly
+  # mean(as.matrix(S)[members, lmembers]) -- this pipeline never produces
+  # NA similarities, so na.rm semantics are unchanged.
   for (cid in small_ids) {
     members <- which(labels == cid)
     # compute mean similarity from each member to each large cluster
     best_cid <- NA_integer_; best_score <- -Inf
     for (lid in large_ids) {
       lmembers <- which(labels == lid)
-      score <- mean(S_mat[members, lmembers], na.rm = TRUE)
+      sub <- S[members, lmembers, drop = FALSE]
+      score <- sum(sub) / (length(members) * length(lmembers))
       if (is.finite(score) && score > best_score) {
         best_score <- score; best_cid <- lid
       }

@@ -259,6 +259,8 @@ er_cluster <- function(S, method,
   }
 
   if (method == "gc") {
+    # GCMER needs the dense lower triangle: refuse to OOM (Phase 3).
+    .check_dense_n(n, "the GCMER distance matrix")
     if (!requireNamespace("GCMER", quietly = TRUE))
       stop("Graph Coloring requires GCMER. Install: remotes::install_github('ddegras/GCMER')")
     D <- as.matrix(1 - S)
@@ -277,6 +279,10 @@ er_cluster <- function(S, method,
   }
 
   # ── Centroidal methods: derive feature matrix X if not supplied ───────────
+  # hclust/PAM build a dense n x n distance matrix (and hclust is O(n^3)):
+  # refuse to OOM (Phase 3). Graph methods above are sparse-safe.
+  if (method %in% c("hclust_avg", "hclust_ward", "pam"))
+    .check_dense_n(n, "the hclust/PAM distance matrix")
   if (is.null(X)) X <- .features_from_S(S, svd_dim)
 
   pick_k <- k
@@ -432,7 +438,9 @@ er_cluster_all <- function(S,
     if (verbose) message("  er_cluster_all: running ", m)
     labs <- tryCatch({
       if (m == "gc" && !is.null(gc_thresholds) && length(gc_thresholds) > 1L) {
-        # Sweep GC thresholds, pick best
+        # Sweep GC thresholds, pick best.
+        # Dense n x n work below: refuse to OOM (Phase 3).
+        .check_dense_n(n, "the GCMER sweep matrices")
         D <- as.matrix(1 - S)
         D[D < 0] <- 0   # element-wise clip preserves matrix structure
         diag(D) <- 0
@@ -473,6 +481,8 @@ er_cluster_all <- function(S,
           igraph::E(g)$weight <- E$x
           # Build a distance object for silhouette scoring.
           # Force symmetry, clip negatives, extract lower triangle as plain vector.
+          # Dense n x n work: refuse to OOM (Phase 3).
+          .check_dense_n(n, "the Leiden-sweep silhouette matrix")
           Sm     <- as.matrix(S); Sm <- (Sm + t(Sm)) / 2
           Dm     <- 1 - Sm; Dm[Dm < 0] <- 0; diag(Dm) <- 0
           D_dist <- stats::as.dist(Dm)
