@@ -31,8 +31,14 @@
 
 #' Generic K-fold cross-validation for the ERBOT pipeline
 #'
-#' Partitions records into K random folds, learns field weights on each
-#' 80\% train fold, and evaluates on the held-out 20\% test fold.
+#' Partitions **entities** (never records) into K folds via
+#' [er_split()] with `entity_disjoint = TRUE`, so no true entity ever appears
+#' in both the training and test part of a fold. Rewritten 2026-10-06
+#' (Phase 2b): the old record-level random folds let one entity leak across
+#' train/test. Field weights are learned on each training fold only
+#' (`weights` method on train truth) and applied to the held-out test fold;
+#' test truth is used for evaluation only (never for k-tuning or method
+#' selection -- `merge` defaults to `"consensus"`, the unsupervised merge).
 #' This is the honest out-of-sample evaluation protocol used in the paper.
 #'
 #' Weight learning uses \code{method = weights} on the training fold only;
@@ -50,13 +56,17 @@
 #' @param weights Character. Weight learning method for the train fold.
 #'   One of \code{"ari"} (default), \code{"equal"}, \code{"fellegi_sunter"}.
 #' @param cluster_methods Character vector of clustering methods.
-#' @param merge Character. Post-processing merge strategy (default \code{"best"}).
+#' @param merge Character. Post-processing merge strategy. Default
+#'   `"consensus"` (unsupervised). `"best"` would select the merge on test
+#'   truth and is therefore dishonest here -- it now warns via [er_merge()].
 #' @param out_dir Character. If set, write per-fold CSVs here.
 #' @param verbose Logical.
 #' @return A named list:
 #'   \item{\code{cv_summary}}{data.frame: mean+SD per method across test folds.}
 #'   \item{\code{all_folds}}{data.frame: per-fold per-method test metrics.}
 #'   \item{\code{fold_weights}}{List of learned weight vectors per fold.}
+#'   \item{\code{folds}}{List of K fold specifications from [er_split()]
+#'     (each with `train_idx`/`test_idx`); entity-disjoint by construction.}
 #'   \item{\code{n_folds_ok}}{Integer: number of folds that completed.}
 #' @export
 er_cv <- function(data, truth, id_col = NULL,
@@ -66,7 +76,7 @@ er_cv <- function(data, truth, id_col = NULL,
                   cluster_methods = c("hclust_avg", "hclust_ward", "gc",
                                       "leiden", "louvain", "label_prop",
                                       "threshold_cc"),
-                  merge = "best",
+                  merge = "consensus",
                   out_dir = NULL,
                   verbose = TRUE) {
 
@@ -87,10 +97,14 @@ er_cv <- function(data, truth, id_col = NULL,
     gp[gp$id %in% id_subset, ]
   }
 
-  set.seed(seed)
-  fold_idx <- sample(rep(seq_len(K), length.out = n))
-  ts(sprintf("Records assigned to %d folds (%s).",
-             K, paste(tabulate(fold_idx), collapse = "/")))
+  # ── Entity-disjoint fold assignment ─────────────────────────────────────
+  # Phase 2b (2026-10-06): entities are the split units. Record-level random
+  # folds let one entity appear in both train and test (train/test leakage).
+  folds <- er_split(id_vec, truth = truth_parsed, k = K,
+                    entity_disjoint = TRUE, seed = seed)
+  ts(sprintf("Entities assigned to %d folds (%s).",
+             K, paste(vapply(folds, function(f) length(f$test_idx),
+                                        integer(1L)), collapse = "/")))
 
   if (!is.null(out_dir) && !dir.exists(out_dir))
     dir.create(out_dir, recursive = TRUE)
@@ -101,7 +115,7 @@ er_cv <- function(data, truth, id_col = NULL,
   for (fold in seq_len(K)) {
     ts(sprintf("── Fold %d / %d ──", fold, K))
 
-    is_test   <- fold_idx == fold
+    is_test   <- seq_len(n) %in% folds[[fold]]$test_idx
     train_df  <- df[!is_test, , drop = FALSE]
     test_df   <- df[ is_test, , drop = FALSE]
     train_ids <- id_vec[!is_test]
@@ -189,7 +203,7 @@ er_cv <- function(data, truth, id_col = NULL,
   if (!length(valid)) {
     warning("er_cv: all folds failed.")
     return(list(cv_summary = NULL, all_folds = NULL,
-                fold_weights = fold_weights, n_folds_ok = 0L))
+                fold_weights = fold_weights, folds = folds, n_folds_ok = 0L))
   }
 
   all_test <- do.call(rbind, lapply(valid, `[[`, "test_perf"))
@@ -224,6 +238,7 @@ er_cv <- function(data, truth, id_col = NULL,
     cv_summary   = cv_summary,
     all_folds    = all_folds,
     fold_weights = fold_weights,
+    folds        = folds,
     n_folds_ok   = length(valid)
   )
 }

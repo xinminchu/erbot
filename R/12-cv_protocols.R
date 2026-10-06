@@ -7,12 +7,13 @@
 #   Sweep (cluster_method, tau) on full data, pick best by ARI.
 #   "Optimistic" estimate: tuned and evaluated on the same data.
 #
-# Protocol B (er_protocol_b):
-#   CV5 tune -> consensus refit.
-#   Each fold: sweep grid on training 80%, record best params.
-#   Take consensus (tau=median, method=majority vote) across folds.
-#   Refit on full data with consensus params, report that single ARI.
-#   "Honest" estimate.
+# Protocol B (er_protocol_b), rewritten 2026-10-06 (Phase 2b):
+#   Entity-disjoint Selection/Test split (test = true held-out).
+#   Inside Selection: entity-disjoint K-fold CV, each fold sweeps the grid
+#   on its training part, best params by training ARI.
+#   Consensus (tau=median, method=majority vote) across folds.
+#   Weights learned on Selection; Test clustered ONCE with consensus params;
+#   the single test ARI is evaluated ONCE. Genuinely honest estimate.
 #
 # er_delta_ari: ARI_A - ARI_B (the leakage/overfitting gap).
 ########################################
@@ -403,26 +404,48 @@ er_protocol_a <- function(sim_list, pairs, n, truth_tbl, id_vec,
 
 # ── er_protocol_b ──────────────────────────────────────────────────────────────
 
-#' Protocol B: CV5 tune -> consensus refit (honest estimate).
+#' Protocol B: entity-disjoint CV tune -> true held-out evaluation.
 #'
-#' For each of 5 folds: sweep (method, tau) grid on the training 80%, record
-#' the best params by training ARI. Select consensus params (tau = median,
-#' method = majority vote) across folds. Refit on full data with consensus
-#' params. Report the single full-data ARI as the honest performance estimate.
+#' Honest-estimate protocol, rewritten 2026-10-06 (Phase 2b). The old version
+#' tuned on CV folds and then refit + evaluated on the FULL data, so the
+#' reported ARI was computed on records that drove parameter selection --
+#' not a held-out estimate at all. The rewrite is:
+#'
+#' 1. Split ENTITIES (never records) once into **Selection** and **Test**
+#'    via [er_stratified_three_way_split()]. Test is the true held-out set.
+#' 2. Inside Selection only: entity-disjoint K-fold CV (via [er_split()]);
+#'    each fold sweeps (method, tau) on its training part and records the
+#'    best params by training ARI.
+#' 3. Consensus params (tau = median snapped to grid, method = majority vote
+#'    with SD tie-break) across folds.
+#' 4. Learn field weights on Selection, cluster the **Test** records once
+#'    with the consensus params, and evaluate **once** against test truth.
+#'
+#' Test labels are never used for any selection or fitting decision.
 #'
 #' @inheritParams er_grid_sweep
-#' @param n_folds Integer. Number of CV folds. Default 5L.
-#' @param base_seed Integer. Base RNG seed; fold k uses base_seed + k. Default 42L.
+#' @param n_folds Integer. Number of CV folds inside the selection set.
+#'   Default 5L.
+#' @param test_fraction Numeric in (0, 1). Fraction of records reserved for
+#'   the held-out test set. Default 0.3.
+#' @param base_seed Integer. Base RNG seed; the split uses `base_seed`, fold
+#'   k uses `base_seed + k`. Default 42L.
 #'
 #' @return A list:
 #'   \describe{
-#'     \item{fold_best}{data.frame with columns fold, method, tau, train_ARI.}
+#'     \item{fold_best}{data.frame with columns fold, method, tau, train_ARI
+#'       (from the selection-set CV).}
 #'     \item{consensus_method}{Character. Consensus method.}
 #'     \item{consensus_tau}{Numeric. Consensus tau (nearest grid value to median).}
-#'     \item{ARI}{Numeric. Full-data ARI at consensus params.}
-#'     \item{Bcubed_F}{Numeric.}
-#'     \item{Vmeasure}{Numeric.}
-#'     \item{labels}{Integer vector of full-data cluster labels.}
+#'     \item{ARI}{Numeric. **One-time held-out test ARI** at consensus params.}
+#'     \item{Bcubed_F}{Numeric. One-time held-out B-cubed F.}
+#'     \item{Vmeasure}{Numeric. One-time held-out V-measure.}
+#'     \item{labels}{Integer vector of cluster labels **for the test records**,
+#'       aligned to `test_id_vec`. (Changed 2026-10-06: previously full-data
+#'       labels.)}
+#'     \item{test_id_vec}{Character vector of held-out test record IDs.}
+#'     \item{selection_idx, test_idx}{Integer index vectors into `id_vec`.}
+#'     \item{n_selection, n_test}{Partition sizes.}
 #'   }
 #' @export
 er_protocol_b <- function(sim_list, pairs, n, truth_tbl, id_vec,
@@ -430,27 +453,58 @@ er_protocol_b <- function(sim_list, pairs, n, truth_tbl, id_vec,
                           tau_grid      = DEFAULT_TAU_GRID,
                           weight_method = "ari",
                           n_folds       = 5L,
+                          test_fraction = 0.3,
                           base_seed     = 42L,
                           verbose       = TRUE) {
 
-  set.seed(base_seed)
-  fold_idx <- split(sample(n), cut(seq_len(n), n_folds, labels = FALSE))
+  if (!is.numeric(test_fraction) || length(test_fraction) != 1L ||
+      test_fraction <= 0 || test_fraction >= 1) {
+    stop("er_protocol_b: 'test_fraction' must be a single number in (0, 1).")
+  }
+
+  # ── Step 1: one entity-disjoint Selection/Test split ──────────────────────
+  if (verbose) message("[Protocol B] Splitting entities into selection/test ",
+                       sprintf("(test_fraction=%.2f)...", test_fraction))
+  sp <- er_stratified_three_way_split(
+    id_vec, truth_tbl,
+    fractions = c(selection = 1 - test_fraction, test = test_fraction),
+    seed = base_seed
+  )
+  sel_idx  <- sp$indices$selection
+  test_idx <- sp$indices$test
+  n_sel <- length(sel_idx); n_tst <- length(test_idx)
+  if (verbose) message(sprintf("[Protocol B] Selection: %d records | Test (held-out): %d records",
+                               n_sel, n_tst))
+
+  n_folds <- as.integer(n_folds)
+  if (n_folds > n_sel) {
+    message(sprintf("[Protocol B] n_folds=%d > selection n=%d; using n_folds=%d.",
+                    n_folds, n_sel, max(2L, n_sel)))
+    n_folds <- max(2L, n_sel)
+  }
+  if (n_folds < 2L) stop("er_protocol_b: selection set too small for CV.")
+
+  # ── Step 2: entity-disjoint K-fold CV inside Selection ────────────────────
+  sel_id_vec <- id_vec[sel_idx]
+  sel_truth  <- truth_tbl[truth_tbl$id %in% sel_id_vec, , drop = FALSE]
+  folds <- er_split(sel_id_vec, truth = sel_truth, k = n_folds,
+                    entity_disjoint = TRUE, seed = base_seed + 1L)
 
   fold_best_rows <- list()
 
   for (k in seq_len(n_folds)) {
-    if (verbose) message(sprintf("[Protocol B] Fold %d/%d: sweeping training set...", k, n_folds))
+    if (verbose) message(sprintf("[Protocol B] Fold %d/%d: sweeping selection training set...",
+                                 k, n_folds))
 
-    test_idx  <- fold_idx[[k]]
-    train_idx <- setdiff(seq_len(n), test_idx)
+    # fold train/test are relative to the selection ordering; map to global
+    fold_train_global <- sel_idx[folds[[k]]$train_idx]
 
     sub <- .subset_to_fold(sim_list, pairs, id_vec,
                            truth_vec = NULL,  # not needed; truth_tbl used by .one_cell
-                           idx = train_idx)
+                           idx = fold_train_global)
 
-    # Build training truth_tbl (subset to training ids)
-    train_ids      <- id_vec[train_idx]
-    train_truth    <- truth_tbl[truth_tbl$id %in% train_ids, ]
+    train_ids   <- id_vec[fold_train_global]
+    train_truth <- truth_tbl[truth_tbl$id %in% train_ids, , drop = FALSE]
 
     sweep_k <- er_grid_sweep(
       sim_list      = sub$sim_list,
@@ -483,8 +537,10 @@ er_protocol_b <- function(sim_list, pairs, n, truth_tbl, id_vec,
   }
 
   fold_best <- do.call(rbind, fold_best_rows)
+  if (is.null(fold_best) || !nrow(fold_best))
+    stop("er_protocol_b: all selection folds failed; cannot form consensus.")
 
-  # Consensus: tau = median (snapped to nearest grid value), method = majority vote
+  # ── Step 3: consensus params ──────────────────────────────────────────────
   consensus_tau_raw <- stats::median(fold_best$tau)
   consensus_tau     <- tau_grid[which.min(abs(tau_grid - consensus_tau_raw))]
 
@@ -507,40 +563,60 @@ er_protocol_b <- function(sim_list, pairs, n, truth_tbl, id_vec,
     paste(names(method_votes), method_votes, sep = "=", collapse = ", ")
   ))
 
-  # Refit on full data with consensus params
-  if (verbose) message("[Protocol B] Refitting on full data with consensus params...")
+  # ── Step 4: weights on Selection, cluster Test once, evaluate once ─────────
+  if (verbose) message("[Protocol B] Learning weights on selection set...")
+  sel_sub <- .subset_to_fold(sim_list, pairs, id_vec, truth_vec = NULL, idx = sel_idx)
+  wt <- tryCatch(
+    er_weights(sel_sub$sim_list, pairs = sel_sub$pairs, truth = sel_truth,
+               id_vec = sel_sub$id_vec, method = weight_method),
+    error = function(e) {
+      warning("er_protocol_b: weight learning on selection failed (",
+              e$message, "); using equal weights.")
+      stats::setNames(rep(1 / length(sel_sub$sim_list), length(sel_sub$sim_list)),
+                       names(sel_sub$sim_list))
+    }
+  )
+
+  if (verbose) message("[Protocol B] Clustering held-out test records (once)...")
+  tst_sub <- .subset_to_fold(sim_list, pairs, id_vec, truth_vec = NULL, idx = test_idx)
   set.seed(base_seed)
-  labels <- tryCatch({
+  test_labels <- tryCatch({
     if (consensus_method == "field_ensemble") {
-      er_field_ensemble(sim_list, pairs, n,
+      er_field_ensemble(tst_sub$sim_list, tst_sub$pairs, tst_sub$n,
                         cluster_method = "threshold_cc",
                         merge_alpha    = consensus_tau,
                         threshold      = 0.5,
                         min_pairs      = 5L)
     } else {
-      wt      <- er_weights(sim_list, pairs = pairs, truth = truth_tbl,
-                            id_vec = id_vec, method = weight_method)
-      s_comb  <- er_combine(sim_list, weights = wt)
-      S       <- er_pairs_to_sparse(pairs, s_comb, n)
-      diag(S) <- 1
+      s_comb   <- er_combine(tst_sub$sim_list, weights = wt)
+      S        <- er_pairs_to_sparse(tst_sub$pairs, s_comb, tst_sub$n)
+      diag(S)  <- 1
       er_cluster(S, method = consensus_method, threshold = consensus_tau)
     }
   }, error = function(e) {
-    warning("er_protocol_b: refit failed: ", e$message)
-    seq_len(n)
+    warning("er_protocol_b: test clustering failed: ", e$message)
+    seq_len(tst_sub$n)
   })
 
-  ev <- tryCatch(
-    er_evaluate(list(m = labels), truth = truth_tbl, id_vec = id_vec,
-                eval_mode = "labeled_only"),
-    error = function(e) NULL
-  )
+  # ── Step 5: ONE-TIME evaluation on the held-out test set ───────────────────
+  test_truth <- truth_tbl[truth_tbl$id %in% tst_sub$id_vec, , drop = FALSE]
+  if (nrow(test_truth) < 2L) {
+    warning("er_protocol_b: fewer than 2 labelled test records; metrics are NA.")
+    ev <- NULL
+  } else {
+    ev <- tryCatch(
+      er_evaluate(list(m = test_labels), truth = test_truth,
+                  id_vec = tst_sub$id_vec, eval_mode = "labeled_only"),
+      error = function(e) NULL
+    )
+  }
 
-  ari      <- if (!is.null(ev)) ev$ARI[1]      else NA_real_
-  bcubed_f <- if (!is.null(ev)) ev$Bcubed_F[1] else NA_real_
-  vmeasure <- if (!is.null(ev)) ev$Vmeasure[1] else NA_real_
+  ari      <- if (!is.null(ev) && nrow(ev)) ev$ARI[1]      else NA_real_
+  bcubed_f <- if (!is.null(ev) && nrow(ev)) ev$Bcubed_F[1] else NA_real_
+  vmeasure <- if (!is.null(ev) && nrow(ev)) ev$Vmeasure[1] else NA_real_
 
-  if (verbose) message(sprintf("[Protocol B] Full-data ARI at consensus params: %.4f", ari))
+  if (verbose) message(sprintf(
+    "[Protocol B] One-time held-out test ARI at consensus params: %.4f", ari))
 
   list(
     fold_best        = fold_best,
@@ -549,7 +625,12 @@ er_protocol_b <- function(sim_list, pairs, n, truth_tbl, id_vec,
     ARI              = ari,
     Bcubed_F         = bcubed_f,
     Vmeasure         = vmeasure,
-    labels           = as.integer(labels)
+    labels           = as.integer(test_labels),
+    test_id_vec      = tst_sub$id_vec,
+    selection_idx    = sel_idx,
+    test_idx         = test_idx,
+    n_selection      = n_sel,
+    n_test           = n_tst
   )
 }
 
@@ -559,7 +640,8 @@ er_protocol_b <- function(sim_list, pairs, n, truth_tbl, id_vec,
 #' Compute the ARI overfitting gap: Protocol A minus Protocol B.
 #'
 #' A positive delta means full-data tuning overstates performance relative
-#' to the honest CV-consensus estimate.
+#' to the honest held-out estimate (Protocol B evaluates once on an
+#' entity-disjoint test set since 2026-10-06).
 #'
 #' @param proto_a List returned by er_protocol_a().
 #' @param proto_b List returned by er_protocol_b().

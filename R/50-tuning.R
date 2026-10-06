@@ -406,14 +406,55 @@ er_external_metrics <- function(labels, truth_pairs = NULL, truth_vec = NULL) {
 # ---------- Tuning Engine (incl. Leiden) -------------------------------------
 
 #' @title Tune ER methods over parameter grids (incl. Leiden if available)
+#'
+#' @description Tune hyperparameters of the vector-space ER methods. Two
+#'   disciplines are supported:
+#'
+#'   * **Internal objectives** (`"silhouette"`, `"silhouette_penalized"`,
+#'     `"ch"`, `"db_min"`, `"modularity"`, `"stability"`): unsupervised;
+#'     candidates are scored on the full data (no labels involved).
+#'
+#'   * **External objectives** (`"ari"`, `"pairwise_f1"`): the objective is
+#'     computed ON gold labels, so tuning on the same labels that are reported
+#'     would be test-set tuning. Phase-2b honest protocol (2026-10-06):
+#'     entities (never records) are split into **Fit / Validation / Test**
+#'     via [er_stratified_three_way_split()]; candidates are scored on
+#'     **Validation only** (dev-set selection); the winner is run **once** on
+#'     **Test** and those one-time metrics are reported in
+#'     `$test_metrics`. Test labels never drive any selection decision, and
+#'     each partition is embedded independently so no TF-IDF vocabulary leaks
+#'     across partitions. The Fit partition is currently unused by the
+#'     unsupervised candidates (reserved for representation learning) and is
+#'     returned in `$split` for inspection.
+#'
 #' @param data data.frame with ER text fields
 #' @param fields character vector of fields to use (concatenated)
 #' @param methods subset of:
 #'   c("kmeans","agglo","dbscan","louvain","leiden","cw","threshold_cc","mst_edit")
 #' @param grids named list of parameter grids per method
-#' @param objective one of: "silhouette","silhouette_penalized","ch","db_min","modularity","stability","ari","pairwise_f1"
-#' @param truth optional list(truth_vec=..., truth_pairs=...)
-#' @return list(curves=data.frame, best=list per method)
+#' @param objective one of: "silhouette","silhouette_penalized","ch","db_min","modularity","stability","ari","pairwise_f1".
+#'   The last two are external: they require `truth$truth_vec` and trigger the
+#'   honest Fit/Validation/Test protocol.
+#' @param truth optional list(truth_vec=..., truth_pairs=...). `truth_vec` is an
+#'   integer/factor/character vector of gold entity labels aligned to the rows
+#'   of `data` (`NA` = unlabelled). In honest mode only `truth_vec` is used;
+#'   `truth_pairs` is ignored.
+#' @param svd_dim integer, default 200
+#' @param sample_n_sil integer, default 2000
+#' @param stability_B integer, default 10
+#' @param split_fractions named numeric vector with `fit`/`validation`/`test`
+#'   summing to 1 (honest mode only). Default `c(0.35, 0.35, 0.30)`.
+#' @param seed integer RNG seed for the entity split (honest mode only).
+#'   Default 42.
+#' @return list with:
+#'   * `curves`: data.frame of per-candidate metrics (validation metrics in
+#'     honest mode, full-data metrics otherwise). Failed cells get `NA`
+#'     metrics and a `cell_error` message instead of aborting the tuning run.
+#'   * `best`: named list of the best row per method.
+#'   * `honest`: logical; whether the Fit/Validation/Test protocol was used.
+#'   * `objective`, `split` (entity-disjoint index lists, honest mode only),
+#'     `test_metrics` (one-time held-out evaluation of the winner, honest
+#'     mode only).
 #' @export
 er_tune <- function(data, fields,
                     methods = c("kmeans","agglo","dbscan","louvain","leiden","cw","threshold_cc","mst_edit"),
@@ -422,11 +463,33 @@ er_tune <- function(data, fields,
                     truth = NULL,
                     svd_dim = 200,
                     sample_n_sil = 2000L,
-                    stability_B = 10L) {
+                    stability_B = 10L,
+                    split_fractions = c(fit = 0.35, validation = 0.35, test = 0.30),
+                    seed = 42L) {
+
+  objective <- match.arg(objective,
+    c("silhouette", "silhouette_penalized", "ch", "db_min", "modularity",
+      "stability", "ari", "pairwise_f1"))
+  EXTERNAL <- c("ari", "pairwise_f1")
+
+  # Honest-tuning gate FIRST, before any expensive embedding: external
+  # objectives select parameters on gold labels, so without truth there is
+  # nothing legitimate to tune. Fail loudly instead of returning silent NAs.
+  if (objective %in% EXTERNAL &&
+      (is.null(truth) || is.null(truth$truth_vec))) {
+    stop("er_tune: objective='", objective, "' selects parameters on gold labels, ",
+         "so it requires truth$truth_vec for the Fit/Validation/Test split. ",
+         "Use an internal objective (e.g. 'silhouette_penalized') for unsupervised tuning.")
+  }
+  honest <- objective %in% EXTERNAL
+  if (honest && !requireNamespace("mclust", quietly = TRUE)) {
+    stop("er_tune: honest tuning with external objectives requires package 'mclust' ",
+         "for ARI computation.")
+  }
 
   stopifnot(all(fields %in% names(data)))
+  n <- nrow(data)
   txt <- do.call(paste, c(unname(data[fields]), sep = " "))
-  Z <- er_tfidf_svd(txt, svd_dim = svd_dim)
 
   # filter out methods lacking deps
   has_igraph  <- er_require("igraph")
@@ -446,111 +509,302 @@ er_tune <- function(data, fields,
   }, methods))
   if (!length(methods)) stop("No methods available (missing dependencies).")
 
+  tune_args <- list(objective = objective, sample_n_sil = sample_n_sil,
+                    stability_B = stability_B)
+
+  if (honest) {
+    tv <- truth$truth_vec
+    if (length(tv) != n)
+      stop("er_tune: length(truth$truth_vec) must equal nrow(data).")
+    if (is.null(names(split_fractions)) ||
+        !all(c("fit", "validation", "test") %in% names(split_fractions))) {
+      stop("er_tune: 'split_fractions' must be a named numeric vector with ",
+           "fit/validation/test entries summing to 1.")
+    }
+    # Entity coding robust to integer/factor/character labels; NA = unlabelled.
+    ent <- as.integer(factor(tv))
+    ids <- paste0("er_tune_rec", seq_len(n))
+    truth_tbl <- tibble::tibble(id = ids, cluster_id = ent)
+    sp <- er_stratified_three_way_split(ids, truth_tbl,
+                                        fractions = split_fractions, seed = seed)
+    idx_fit <- sp$indices$fit
+    idx_val <- sp$indices$validation
+    idx_tst <- sp$indices$test
+    if (length(idx_val) < 4L || length(idx_tst) < 2L) {
+      stop("er_tune: validation/test partitions too small for honest tuning (n=",
+           n, "). Use more records or an internal objective.")
+    }
+    if (sum(!is.na(ent[idx_val])) < 2L) {
+      stop("er_tune: fewer than 2 labelled records in the validation partition; ",
+           "cannot select parameters.")
+    }
+
+    # Each partition embedded independently: no vocabulary leaks across
+    # Fit/Validation/Test.
+    Z_val <- .embed_part(txt[idx_val], svd_dim)
+    Z_tst <- .embed_part(txt[idx_tst], svd_dim)
+    f1_val <- data[[fields[1]]][idx_val]
+    f1_tst <- data[[fields[1]]][idx_tst]
+
+    # SELECTION: score every candidate on Validation only.
+    sel <- .tune_method_grid(methods, grids, Z_val, txt[idx_val], f1_val,
+                             ent[idx_val], honest = TRUE, tune_args)
+
+    wscores <- unlist(sel$best_scores)
+    if (!length(wscores) || all(!is.finite(wscores))) {
+      stop("er_tune: no candidate produced a valid validation score.")
+    }
+    wmethod <- names(which.max(wscores))
+    wparams <- sel$best_params[[wmethod]]
+
+    # FINAL (once): run the winner on Test; these are the reported metrics.
+    tcell <- tryCatch(
+      er_measure_tm(.tune_run_cell(wmethod, wparams, Z_tst, txt[idx_tst], f1_tst)),
+      error = function(e) e
+    )
+    if (inherits(tcell, "error")) {
+      stop("er_tune: winning parameters failed on the test partition: ",
+           conditionMessage(tcell))
+    }
+    lab_t <- !is.na(ent[idx_tst])
+    if (sum(lab_t) < 2L) {
+      warning("er_tune: fewer than 2 labelled records in test; test metrics are NA.")
+      tm <- list(ari = NA_real_, pair_f1 = NA_real_, b3_f1 = NA_real_,
+                 pair_precision = NA_real_, pair_recall = NA_real_)
+    } else {
+      s <- er_external_scores(tcell$result$labels[lab_t], ent[idx_tst][lab_t])
+      tm <- list(ari = s$ari, pair_f1 = s$pair_f1, b3_f1 = s$b3_f1,
+                 pair_precision = s$pair_precision, pair_recall = s$pair_recall)
+    }
+    test_metrics <- c(list(method = wmethod, params = wparams,
+                           n_test = length(idx_tst),
+                           n_test_labelled = sum(lab_t)), tm)
+
+    return(list(curves = sel$curves, best = sel$best, honest = TRUE,
+                objective = objective,
+                split = list(fit = idx_fit, validation = idx_val, test = idx_tst),
+                test_metrics = test_metrics))
+  }
+
+  # Legacy path: internal objective, no labels involved.
+  Z <- er_tfidf_svd(txt, svd_dim = svd_dim)
+  all <- .tune_method_grid(methods, grids, Z, txt, data[[fields[1]]], truth,
+                           honest = FALSE, tune_args)
+  list(curves = all$curves, best = all$best, honest = FALSE,
+       objective = objective, split = NULL, test_metrics = NULL)
+}
+
+# ---------- Honest-tuning internals (not exported: dot-prefixed) ---------------
+
+#' Per-partition TF-IDF+SVD embedding with dimension fallback.
+#'
+#' Each partition is embedded independently (fit_transform inside the
+#' partition) so no vocabulary leaks across Fit/Validation/Test. `irlba`
+#' needs `svd_dim < min(nrow, ncol)` of the document-term matrix; tiny
+#' partitions may not support the requested dimension, so halve and retry.
+#' @keywords internal
+.embed_part <- function(txtp, svd_dim) {
+  if (!requireNamespace("text2vec", quietly = TRUE) ||
+      !requireNamespace("irlba", quietly = TRUE)) {
+    stop("er_tune: packages 'text2vec' and 'irlba' are required for text embeddings.")
+  }
+  d <- max(2L, min(as.integer(svd_dim), length(txtp) - 1L))
+  repeat {
+    out <- tryCatch(er_tfidf_svd(txtp, svd_dim = d), error = function(e) e)
+    if (!inherits(out, "error")) return(out)
+    if (d <= 2L) stop("er_tune: embedding failed: ", conditionMessage(out))
+    d <- max(2L, floor(d / 2))
+  }
+}
+
+#' Run one (method, params) cell on a partition's embeddings.
+#' @keywords internal
+.tune_run_cell <- function(m, params, Zp, txtp, f1txtp) {
+  if (m == "kmeans") {
+    lab <- er_kmeans_from_Z(Zp, k = params$k, nstart = params$nstart %||% 10)
+    list(labels = lab, graph = NULL)
+  } else if (m == "agglo") {
+    lab <- er_agglomerative_cosine(Zp, k = params$k)
+    list(labels = lab, graph = NULL)
+  } else if (m == "dbscan") {
+    lab <- er_dbscan_from_Z(Zp, eps = params$eps, minPts = params$minPts)
+    list(labels = lab, graph = NULL)
+  } else if (m == "louvain") {
+    lab <- er_louvain_from_Z(Zp, k_knn = params$k_knn, min_sim = params$min_sim)
+    G <- attr(lab, "graph"); list(labels = as.integer(lab), graph = G)
+  } else if (m == "leiden") {
+    lab <- er_leiden_from_Z(Zp, k_knn = params$k_knn, min_sim = params$min_sim,
+                            resolution_parameter = params$resolution_parameter)
+    G <- attr(lab, "graph"); list(labels = as.integer(lab), graph = G)
+  } else if (m == "cw") {
+    G <- er_knn_graph(Zp, k_knn = params$k_knn %||% 50, min_sim = params$min_sim %||% 0.1)
+    lab <- er_chinese_whispers(G, iters = params$iters)
+    list(labels = lab, graph = G)
+  } else if (m == "threshold_cc") {
+    lab <- er_threshold_cc(Zp, min_sim = params$min_sim, k_knn = params$k_knn)
+    G <- er_knn_graph(Zp, k_knn = params$k_knn, min_sim = params$min_sim)
+    list(labels = lab, graph = G)
+  } else if (m == "mst_edit") {
+    lab <- er_mst_edit(f1txtp, max_dist = params$max_dist)
+    list(labels = lab, graph = NULL)
+  } else stop("Unknown method.")
+}
+
+#' Default parameter grid for one method (same grids as before).
+#' @keywords internal
+.tune_default_grid <- function(m) {
+  switch(m,
+    kmeans = expand.grid(k = seq(10, 300, by = 10), nstart = 10),
+    agglo  = expand.grid(k = seq(10, 300, by = 10)),
+    dbscan = expand.grid(eps = c(0.8, 1.0, 1.2), minPts = c(5, 10)),
+    louvain= expand.grid(k_knn = c(20, 50, 100), min_sim = c(0.0, 0.1, 0.2)),
+    leiden = expand.grid(k_knn = c(20, 50, 100), min_sim = c(0.0, 0.1, 0.2),
+                         resolution_parameter = c(0.2, 0.5, 1.0)),
+    cw     = expand.grid(iters = c(10, 20, 50), k_knn = 50, min_sim = 0.1),
+    threshold_cc = expand.grid(k_knn = c(50, 100), min_sim = c(0.5, 0.6, 0.7)),
+    mst_edit = expand.grid(max_dist = c(1, 2, 3)),
+    stop(sprintf("Unknown method %s", m))
+  )
+}
+
+#' Score one fitted cell: internal metrics always; external metrics depend on
+#' the discipline. In honest mode `truthp` is the partition's integer entity
+#' vector (NA = unlabelled) and only labelled records are scored, via the
+#' pair-counting implementation (no pair enumeration). In legacy mode `truthp`
+#' is the user-supplied `truth` list (or NULL).
+#' @keywords internal
+.tune_score_row <- function(m, params, labels, G, Zp, txtp, truthp,
+                            honest, tune_args) {
+  objective    <- tune_args$objective
+  sample_n_sil <- tune_args$sample_n_sil
+  stability_B  <- tune_args$stability_B
+
+  int <- er_internal_metrics(Zp, labels, G = G, sample_n = sample_n_sil)
+  ps  <- er_penalize_silhouette(int$silhouette, length(unique(labels)), nrow(Zp))
+  stab <- if (identical(objective, "stability")) {
+    er_stability_ari(Zp, B = stability_B, text = txtp, fit_fun = function(X, text_sub = NULL, ...) {
+      switch(m,
+        kmeans = er_kmeans_from_Z(X, k = params$k),
+        agglo  = er_agglomerative_cosine(X, k = params$k),
+        dbscan = er_dbscan_from_Z(X, eps = params$eps, minPts = params$minPts),
+        louvain= as.integer(er_louvain_from_Z(X, k_knn = params$k_knn, min_sim = params$min_sim)),
+        leiden = as.integer(er_leiden_from_Z(X, k_knn = params$k_knn, min_sim = params$min_sim,
+                                             resolution_parameter = params$resolution_parameter %||% 0.5)),
+        cw     = {
+          Gx <- er_knn_graph(X, k_knn = params$k_knn %||% 50, min_sim = params$min_sim %||% 0.1)
+          er_chinese_whispers(Gx, iters = params$iters %||% 20)
+        },
+        threshold_cc = er_threshold_cc(X, min_sim = params$min_sim, k_knn = params$k_knn),
+        # M-41 fix (2026-10-06): the old code passed params$text, which is
+        # always NULL on this path -> er_mst_edit(NULL) errored. Use the
+        # subsampled raw text forwarded by er_stability_ari instead.
+        mst_edit = er_mst_edit(text_sub, max_dist = params$max_dist)
+      )
+    })
+  } else NA_real_
+
+  if (honest) {
+    lab <- !is.na(truthp)
+    ext <- if (sum(lab) >= 2L) {
+      s <- er_external_scores(labels[lab], truthp[lab])
+      list(ari = s$ari, pairwise_f1 = s$pair_f1)
+    } else {
+      list(ari = NA_real_, pairwise_f1 = NA_real_)
+    }
+  } else {
+    ext <- if (!is.null(truthp)) {
+      er_external_metrics(labels, truth_pairs = truthp$truth_pairs,
+                          truth_vec = truthp$truth_vec)
+    } else {
+      list(ari = NA_real_, pairwise_f1 = NA_real_)
+    }
+  }
+
+  data.frame(
+    method = m,
+    k = if (!is.null(params$k)) params$k else NA_integer_,
+    k_knn = if (!is.null(params$k_knn)) params$k_knn else NA_integer_,
+    min_sim = if (!is.null(params$min_sim)) params$min_sim else NA_real_,
+    eps = if (!is.null(params$eps)) params$eps else NA_real_,
+    minPts = if (!is.null(params$minPts)) params$minPts else NA_real_,
+    resolution_parameter = if (!is.null(params$resolution_parameter)) params$resolution_parameter else NA_real_,
+    max_dist = if (!is.null(params$max_dist)) params$max_dist else NA_real_,
+    silhouette = int$silhouette,
+    silhouette_pen = ps,
+    ch = int$ch,
+    db = int$db,
+    modularity = int$modularity,
+    stability = stab,
+    ari = ext$ari,
+    pairwise_f1 = ext$pairwise_f1,
+    stringsAsFactors = FALSE
+  )
+}
+
+#' One NA row with the same columns as .tune_score_row(), plus the error.
+#' @keywords internal
+.tune_na_row <- function(m, params, err) {
+  row <- data.frame(
+    method = m,
+    k = if (!is.null(params$k)) params$k else NA_integer_,
+    k_knn = if (!is.null(params$k_knn)) params$k_knn else NA_integer_,
+    min_sim = if (!is.null(params$min_sim)) params$min_sim else NA_real_,
+    eps = if (!is.null(params$eps)) params$eps else NA_real_,
+    minPts = if (!is.null(params$minPts)) params$minPts else NA_real_,
+    resolution_parameter = if (!is.null(params$resolution_parameter)) params$resolution_parameter else NA_real_,
+    max_dist = if (!is.null(params$max_dist)) params$max_dist else NA_real_,
+    silhouette = NA_real_, silhouette_pen = NA_real_,
+    ch = NA_real_, db = NA_real_, modularity = NA_real_,
+    stability = NA_real_, ari = NA_real_, pairwise_f1 = NA_real_,
+    stringsAsFactors = FALSE
+  )
+  row$cell_error <- err
+  row$time_sec <- NA_real_
+  row$peak_mem_MB <- NA_real_
+  row
+}
+
+#' Run the full method loop on one partition.
+#'
+#' Each cell is guarded: a failing parameter combination yields an NA row
+#' (with `cell_error`) instead of aborting the whole tuning run. This matters
+#' for honest mode, where default grids (e.g. k up to 300) routinely exceed
+#' small validation partitions.
+#'
+#' @return list(curves, best, best_params, best_scores).
+#' @keywords internal
+.tune_method_grid <- function(methods, grids, Zp, txtp, f1txtp, truthp,
+                              honest, tune_args) {
+  objective <- tune_args$objective
   rows <- list()
   best_by_method <- list()
-
-  score_row <- function(m, params, labels, G = NULL) {
-    int <- er_internal_metrics(Z, labels, G = G, sample_n = sample_n_sil)
-    ps  <- er_penalize_silhouette(int$silhouette, length(unique(labels)), nrow(Z))
-    stab <- if (identical(objective, "stability")) {
-      er_stability_ari(Z, B = stability_B, text = txt, fit_fun = function(X, text_sub = NULL, ...) {
-        switch(m,
-          kmeans = er_kmeans_from_Z(X, k = params$k),
-          agglo  = er_agglomerative_cosine(X, k = params$k),
-          dbscan = er_dbscan_from_Z(X, eps = params$eps, minPts = params$minPts),
-          louvain= as.integer(er_louvain_from_Z(X, k_knn = params$k_knn, min_sim = params$min_sim)),
-          leiden = as.integer(er_leiden_from_Z(X, k_knn = params$k_knn, min_sim = params$min_sim,
-                                               resolution_parameter = params$resolution_parameter %||% 0.5)),
-          cw     = {
-            Gx <- er_knn_graph(X, k_knn = params$k_knn %||% 50, min_sim = params$min_sim %||% 0.1)
-            er_chinese_whispers(Gx, iters = params$iters %||% 20)
-          },
-          threshold_cc = er_threshold_cc(X, min_sim = params$min_sim, k_knn = params$k_knn),
-          # M-41 fix (2026-10-06): the old code passed params$text, which is
-          # always NULL on this path -> er_mst_edit(NULL) errored. Use the
-          # subsampled raw text forwarded by er_stability_ari instead.
-          mst_edit = er_mst_edit(text_sub, max_dist = params$max_dist)
-        )
-      })
-    } else NA_real_
-
-    ext <- if (!is.null(truth)) er_external_metrics(labels,
-                     truth_pairs = truth$truth_pairs, truth_vec = truth$truth_vec) else list(ari=NA_real_, pairwise_f1=NA_real_)
-
-    data.frame(
-      method = m,
-      k = if (!is.null(params$k)) params$k else NA_integer_,
-      k_knn = if (!is.null(params$k_knn)) params$k_knn else NA_integer_,
-      min_sim = if (!is.null(params$min_sim)) params$min_sim else NA_real_,
-      eps = if (!is.null(params$eps)) params$eps else NA_real_,
-      minPts = if (!is.null(params$minPts)) params$minPts else NA_real_,
-      resolution_parameter = if (!is.null(params$resolution_parameter)) params$resolution_parameter else NA_real_,
-      max_dist = if (!is.null(params$max_dist)) params$max_dist else NA_real_,
-      silhouette = int$silhouette,
-      silhouette_pen = ps,
-      ch = int$ch,
-      db = int$db,
-      modularity = int$modularity,
-      stability = stab,
-      ari = ext$ari,
-      pairwise_f1 = ext$pairwise_f1,
-      stringsAsFactors = FALSE
-    )
-  }
+  best_params <- list()
+  best_scores <- list()
 
   for (m in methods) {
     g <- grids[[m]]
-    if (is.null(g)) {
-      g <- switch(m,
-        kmeans = expand.grid(k = seq(10, 300, by = 10), nstart = 10),
-        agglo  = expand.grid(k = seq(10, 300, by = 10)),
-        dbscan = expand.grid(eps = c(0.8, 1.0, 1.2), minPts = c(5, 10)),
-        louvain= expand.grid(k_knn = c(20, 50, 100), min_sim = c(0.0, 0.1, 0.2)),
-        leiden = expand.grid(k_knn = c(20, 50, 100), min_sim = c(0.0, 0.1, 0.2),
-                             resolution_parameter = c(0.2, 0.5, 1.0)),
-        cw     = expand.grid(iters = c(10, 20, 50), k_knn = 50, min_sim = 0.1),
-        threshold_cc = expand.grid(k_knn = c(50, 100), min_sim = c(0.5, 0.6, 0.7)),
-        mst_edit = expand.grid(max_dist = c(1,2,3)),
-        stop(sprintf("Unknown method %s", m))
-      )
-    }
+    if (is.null(g)) g <- .tune_default_grid(m)
 
     method_rows <- vector("list", nrow(g))
-    best_row <- NULL; best_score <- -Inf
+    best_row <- NULL; best_par <- NULL; best_score <- -Inf
 
     for (i in seq_len(nrow(g))) {
       params <- as.list(g[i, , drop = FALSE])
-      tm <- er_measure_tm({
-        if (m == "kmeans") {
-          lab <- er_kmeans_from_Z(Z, k = params$k, nstart = params$nstart %||% 10); list(labels = lab, graph = NULL)
-        } else if (m == "agglo") {
-          lab <- er_agglomerative_cosine(Z, k = params$k); list(labels = lab, graph = NULL)
-        } else if (m == "dbscan") {
-          lab <- er_dbscan_from_Z(Z, eps = params$eps, minPts = params$minPts); list(labels = lab, graph = NULL)
-        } else if (m == "louvain") {
-          lab <- er_louvain_from_Z(Z, k_knn = params$k_knn, min_sim = params$min_sim)
-          G <- attr(lab, "graph"); list(labels = as.integer(lab), graph = G)
-        } else if (m == "leiden") {
-          lab <- er_leiden_from_Z(Z, k_knn = params$k_knn, min_sim = params$min_sim,
-                                  resolution_parameter = params$resolution_parameter)
-          G <- attr(lab, "graph"); list(labels = as.integer(lab), graph = G)
-        } else if (m == "cw") {
-          G <- er_knn_graph(Z, k_knn = params$k_knn %||% 50, min_sim = params$min_sim %||% 0.1)
-          lab <- er_chinese_whispers(G, iters = params$iters)
-          list(labels = lab, graph = G)
-        } else if (m == "threshold_cc") {
-          lab <- er_threshold_cc(Z, min_sim = params$min_sim, k_knn = params$k_knn)
-          G <- er_knn_graph(Z, k_knn = params$k_knn, min_sim = params$min_sim)
-          list(labels = lab, graph = G)
-        } else if (m == "mst_edit") {
-          text_field <- data[[fields[1]]]
-          lab <- er_mst_edit(text_field, max_dist = params$max_dist)
-          list(labels = lab, graph = NULL)
-        } else stop("Unknown method.")
-      })
-      row <- score_row(m, params, tm$result$labels, G = tm$result$graph)
-      row$time_sec    <- tm$time_sec
-      row$peak_mem_MB <- tm$peak_mem_MB
+      cell <- tryCatch({
+        tm <- er_measure_tm(.tune_run_cell(m, params, Zp, txtp, f1txtp))
+        list(ok = TRUE, labels = tm$result$labels, graph = tm$result$graph,
+             time_sec = tm$time_sec, peak_mem_MB = tm$peak_mem_MB)
+      }, error = function(e) list(ok = FALSE, err = conditionMessage(e)))
+
+      if (cell$ok) {
+        row <- .tune_score_row(m, params, cell$labels, cell$graph, Zp, txtp,
+                               truthp, honest, tune_args)
+        row$cell_error <- NA_character_
+        row$time_sec    <- cell$time_sec
+        row$peak_mem_MB <- cell$peak_mem_MB
+      } else {
+        row <- .tune_na_row(m, params, cell$err)
+      }
       method_rows[[i]] <- row
 
       sc <- switch(objective,
@@ -564,18 +818,24 @@ er_tune <- function(data, fields,
         pairwise_f1 = row$pairwise_f1,
         stop("Unknown objective")
       )
-      if (!is.na(sc) && sc > best_score) { best_score <- sc; best_row <- row }
+      if (!is.na(sc) && sc > best_score) {
+        best_score <- sc; best_row <- row; best_par <- params
+      }
     }
 
     method_df <- do.call(rbind, method_rows)
     rows[[m]] <- method_df
     best_by_method[[m]] <- best_row
+    best_params[[m]] <- best_par
+    best_scores[[m]] <- best_score
   }
 
   curves <- do.call(rbind, rows)
-  list(curves = curves, best = best_by_method)
+  list(curves = curves, best = best_by_method,
+       best_params = best_params, best_scores = best_scores)
 }
 
+# ---------- Scalability -------------------------------------------------------
 # ---------- Scalability -------------------------------------------------------
 
 #' @title Scalability curves by subsampling n
