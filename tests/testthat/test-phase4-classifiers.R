@@ -21,7 +21,9 @@
   )
 }
 
-# Complete separation on f1: plain glm() must diverge here.
+# Near-complete separation on f1/f2. Firth stays finite here; plain glm()
+# typically stalls at large finite coefficients (hence the deterministic
+# collinearity case below for the invalid path).
 .make_separated <- function() {
   set.seed(7)
   n <- 40L
@@ -76,24 +78,50 @@ test_that("all 11 classifiers fit well-behaved toy data", {
   }
 })
 
-test_that("advisor's core finding: glm diverges under separation, Firth survives", {
-  d <- .make_separated()
-  glm_fit <- er_pair_classify(d$x, d$y, classifier = "logistic",
-                              logistic_method = "glm")
-  expect_false(isTRUE(glm_fit$valid))
-  expect_match(glm_fit$invalid_reason, "converge|boundary|finite|rank",
-               ignore.case = TRUE)
+test_that("advisor's discipline: glm flags structural problems, Firth survives separation", {
+  # 1. Perfectly collinear features -> aliased (NA) coefficients -> invalid.
+  #    Deterministic; mirrors the advisor's DBLP finding.
+  d <- .make_well_behaved()
+  d$x$f1_dup <- d$x$f1
+  g <- er_pair_classify(d$x, d$y, classifier = "logistic",
+                        logistic_method = "glm", use_interactions = FALSE)
+  expect_false(isTRUE(g$valid))
+  expect_match(g$invalid_reason, "aliased|non-finite", ignore.case = TRUE)
+
+  # 2. Complete separation -> Firth stays finite (the advisor's Firth ablation).
   if (!requireNamespace("brglm2", quietly = TRUE))
     skip("brglm2 not installed")
-  firth_fit <- er_pair_classify(d$x, d$y, classifier = "logistic",
-                                logistic_method = "firth")
-  expect_true(isTRUE(firth_fit$valid),
-              info = firth_fit$invalid_reason)
-  expect_true(all(is.finite(firth_fit$train_prob)))
-  # Firth default in er_pair_classify
-  dflt <- er_pair_classify(d$x, d$y, classifier = "logistic")
+  s <- .make_separated()
+  f <- er_pair_classify(s$x, s$y, classifier = "logistic",
+                        logistic_method = "firth")
+  expect_true(isTRUE(f$valid), info = f$invalid_reason)
+  expect_true(all(is.finite(f$train_prob)))
+  # Firth is the default
+  dflt <- er_pair_classify(s$x, s$y, classifier = "logistic")
   expect_true(isTRUE(dflt$valid))
   expect_equal(dflt$params$logistic_method, "firth")
+
+  # 3. Validity checks, unit-tested deterministically on mock fits.
+  expect_match(
+    erbot:::.logistic_invalid_reason(list(converged = FALSE, coefficients = c(1, 2),
+                                  rank = 2L)),
+    "did not converge")
+  expect_match(
+    erbot:::.logistic_invalid_reason(list(converged = TRUE, coefficients = c(1, NA),
+                                  rank = 2L)),
+    "aliased")
+  expect_match(
+    erbot:::.logistic_invalid_reason(list(converged = TRUE, coefficients = c(1, 2),
+                                  rank = 1L)),
+    "rank deficient")
+  expect_match(
+    erbot:::.firth_logistic_invalid_reason(list(converged = TRUE,
+                                        coefficients = c(1, Inf))),
+    "non-finite")
+  expect_equal(
+    erbot:::.logistic_invalid_reason(list(converged = TRUE, coefficients = c(1, 2),
+                                  rank = 2L)),
+    "")
 })
 
 test_that("invalid fits report, never crash: one-class y, tiny qda minority", {
@@ -126,7 +154,8 @@ test_that("er_cluster supervised methods: missing inputs fail loudly", {
   expect_error(er_cluster(S, method = "logistic", truth_vec = c(1L, 1L, 2L, 2L)),
                "sim_list and pairs")
   expect_error(er_cluster(S, method = "logistic"), "truth_vec")
-  expect_error(er_cluster(S, method = "svm"), "match.arg|should be one of")
+  # "svm" partial-matches the new "svm_radial" (standard match.arg behavior)
+  expect_error(er_cluster(S, method = "svm"), "truth_vec")
 })
 
 test_that("er_cluster logistic end-to-end on a tiny dedup problem", {
@@ -159,11 +188,12 @@ test_that("er_cluster logistic end-to-end on a tiny dedup problem", {
 test_that("er_cluster falls back with a warning when the classifier is invalid", {
   if (!requireNamespace("MASS", quietly = TRUE))
     skip("MASS not installed")
-  # identical within-entity names -> the TRUE class has zero variance ->
-  # qda is structurally inapplicable -> louvain fallback
-  df <- data.frame(name = c("aa", "aa", "bb", "bb"),
+  # 6 records -> 15 labeled pairs (>= 10 minimum). Identical within-entity
+  # names -> the TRUE class has zero variance -> qda is structurally
+  # inapplicable -> louvain fallback with a clear warning.
+  df <- data.frame(name = c("aa", "aa", "aa", "bb", "bb", "cc"),
                    stringsAsFactors = FALSE)
-  truth_vec <- c(1L, 1L, 2L, 2L)
+  truth_vec <- c(1L, 1L, 1L, 2L, 2L, 3L)
   pairs <- er_block(df, method = "none")
   spec <- list(list(name = "name", type = "jw"))
   sim <- er_similarity(df, pairs, spec = spec)

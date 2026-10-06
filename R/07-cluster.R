@@ -279,36 +279,6 @@ er_cluster <- function(S, method,
     return(as.integer(ents[, 1L]))
   }
 
-  # ── Centroidal methods: derive feature matrix X if not supplied ───────────
-  # hclust/PAM build a dense n x n distance matrix (and hclust is O(n^3)):
-  # refuse to OOM (Phase 3). Graph methods above are sparse-safe.
-  if (method %in% c("hclust_avg", "hclust_ward", "pam"))
-    .check_dense_n(n, "the hclust/PAM distance matrix")
-  if (is.null(X)) X <- .features_from_S(S, svd_dim)
-
-  pick_k <- k
-  if (is.null(pick_k)) {
-    pick_k <- .tune_k(X, k_grid, truth_vec, method, tune_metric)
-  }
-  pick_k <- max(2L, min(as.integer(pick_k), n - 1L))
-
-  if (method == "hclust_avg") {
-    D <- er_cosine_dist(X)
-    hc <- stats::hclust(stats::as.dist(D), method = "average")
-    return(as.integer(stats::cutree(hc, k = pick_k)))
-  }
-
-  if (method == "hclust_ward") {
-    D <- stats::dist(X)   # Euclidean — Ward.D2 requires Euclidean geometry
-    hc <- stats::hclust(D, method = "ward.D2")
-    return(as.integer(stats::cutree(hc, k = pick_k)))
-  }
-
-  if (method == "pam") {
-    D <- er_cosine_dist(X)
-    return(as.integer(cluster::pam(stats::as.dist(D), k = pick_k)$clustering))
-  }
-
   # ── Supervised pairwise classifiers ────────────────────────────────────────
   # The advisor's eleven classifier families. Each trains on truth-labeled
   # pairs using per-field similarities as features, predicts match
@@ -344,6 +314,37 @@ er_cluster <- function(S, method,
     diag(S_new) <- 1
     return(er_cluster(S_new, "threshold_cc", threshold = threshold))
   }
+
+  # ── Centroidal methods: derive feature matrix X if not supplied ───────────
+  # hclust/PAM build a dense n x n distance matrix (and hclust is O(n^3)):
+  # refuse to OOM (Phase 3). Graph methods above are sparse-safe.
+  if (method %in% c("hclust_avg", "hclust_ward", "pam"))
+    .check_dense_n(n, "the hclust/PAM distance matrix")
+  if (is.null(X)) X <- .features_from_S(S, svd_dim)
+
+  pick_k <- k
+  if (is.null(pick_k)) {
+    pick_k <- .tune_k(X, k_grid, truth_vec, method, tune_metric)
+  }
+  pick_k <- max(2L, min(as.integer(pick_k), n - 1L))
+
+  if (method == "hclust_avg") {
+    D <- er_cosine_dist(X)
+    hc <- stats::hclust(stats::as.dist(D), method = "average")
+    return(as.integer(stats::cutree(hc, k = pick_k)))
+  }
+
+  if (method == "hclust_ward") {
+    D <- stats::dist(X)   # Euclidean — Ward.D2 requires Euclidean geometry
+    hc <- stats::hclust(D, method = "ward.D2")
+    return(as.integer(stats::cutree(hc, k = pick_k)))
+  }
+
+  if (method == "pam") {
+    D <- er_cosine_dist(X)
+    return(as.integer(cluster::pam(stats::as.dist(D), k = pick_k)$clustering))
+  }
+
 
   rep(1L, n)   # fallback (should not reach here)
 }

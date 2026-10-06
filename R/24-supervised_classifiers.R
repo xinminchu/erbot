@@ -166,11 +166,14 @@ er_pair_features <- function(sim_list, pairs) {
 
 .knn_prob_from_neighbors <- function(nn_index, nn_dist, y, k, weighted) {
   y <- factor(y, levels = c(FALSE, TRUE))
-  pos <- y[nn_index] == "TRUE"
+  n <- nrow(nn_index)
+  # Indexing a vector by a matrix returns a flat vector (column-major);
+  # reshape back to n x k so rowSums() works per query point.
+  pos <- matrix(y[nn_index] == "TRUE", nrow = n)
   if (!weighted) {
     return(.clamp_probability(rowSums(pos) / k))
   }
-  w <- 1 / (nn_dist + 1e-16)
+  w <- 1 / (matrix(nn_dist, nrow = n) + 1e-16)
   w_pos <- rowSums(w * pos)
   w_tot <- rowSums(w)
   w_tot[w_tot == 0] <- 1
