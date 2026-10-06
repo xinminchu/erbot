@@ -319,9 +319,13 @@ er_evaluate <- function(pred_list,
                      mname, length(missing), length(extra), msg_extra))
       }
       pv <- pv[id_vec]  # reorder to canonical id_vec order; names now safe to drop
-    } else if (length(pv) != n) {
-      stop(sprintf("er_evaluate: prediction '%s' has length %d, expected %d (records).",
-                   mname, length(pv), n))
+    } else if (length(pv) != length(id_vec)) {
+      # NB: compare against id_vec (the record universe), NOT n: n itself is
+      # inferred from pred_list[[1]], so a short first vector would pass a
+      # length(pv) != n check vacuously.
+      stop(sprintf(paste0("er_evaluate: prediction '%s' has length %d but id_vec has %d records; ",
+                          "unnamed predictions must cover every record in id_vec order."),
+                   mname, length(pv), length(id_vec)))
     }
     labs <- as.integer(pv)[eval_idx]
 
