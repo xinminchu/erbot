@@ -253,13 +253,102 @@ er_block_embed <- function(data, fields, model = NULL,
 er_recall_at_k <- function(pairs, truth_vec) {
   if (!nrow(pairs)) return(NA_real_)
   cand <- paste(pmin(pairs$idx1, pairs$idx2), pmax(pairs$idx1, pairs$idx2), sep = "-")
-  # all true duplicate pairs
+  dup <- .dup_pairs_of(truth_vec)
+  if (is.null(dup) || !length(dup)) return(NA_real_)
+  mean(dup %in% cand)
+}
+
+#' All true duplicate pair keys from a truth label vector
+#' @keywords internal
+.dup_pairs_of <- function(truth_vec) {
   tl <- split(seq_along(truth_vec), truth_vec)
-  dup <- unlist(lapply(tl, function(m) {
+  unlist(lapply(tl, function(m) {
     if (length(m) < 2L) return(NULL)
     cmb <- utils::combn(m, 2L)
     paste(pmin(cmb[1L, ], cmb[2L, ]), pmax(cmb[1L, ], cmb[2L, ]), sep = "-")
   }))
-  if (is.null(dup) || !length(dup)) return(NA_real_)
-  mean(dup %in% cand)
+}
+
+#' Honest blocking evaluation: entity-level train/test split
+#'
+#' Trains the retriever on train entities' duplicate pairs, embeds all
+#' records, retrieves top-K over the full data (as in production), and
+#' reports recall@K on test entities' duplicate pairs only.
+#'
+#' This is the number you can put in a paper: it answers "a retriever
+#' trained on old labeled data, how well does it block new data?"
+#' In-sample recall (train and report on the same pairs) is optimistic
+#' and must not be reported as blocking quality.
+#'
+#' @param X Numeric matrix of record vectors (e.g. from
+#'   \code{er_char_ngrams()}).
+#' @param entity_labels Integer vector of ground-truth entity labels.
+#' @param k Integer. Neighbors per record for retrieval.
+#' @param test_size Numeric. Fraction of entities held out for evaluation.
+#' @param seed Integer. RNG seed.
+#' @param ... Passed to \code{er_train_retriever()}.
+#' @return A named list: recall, k, n_pairs, n_train/test_pairs/entities.
+#' @export
+er_blocking_heldout <- function(X, entity_labels, k,
+                                test_size = 0.3, seed = 42L, ...) {
+  stopifnot(is.matrix(X))
+  entities <- sort(unique(entity_labels[!is.na(entity_labels)]))
+  if (length(entities) < 2L)
+    stop("held-out eval needs >= 2 truth entities.")
+  set.seed(seed)
+  n_test <- max(1L, as.integer(length(entities) * test_size))
+  test_ents <- sample(entities, n_test)
+
+  tl <- split(seq_along(entity_labels), entity_labels)
+  tl <- tl[names(tl) != "NA" & !is.na(names(tl))]
+  test_names <- as.character(test_ents)
+  train_pairs <- list(); test_pairs <- list()
+  for (e in names(tl)) {
+    m <- tl[[e]]
+    if (length(m) < 2L) next
+    cmb <- utils::combn(m, 2L)
+    pl <- lapply(seq_len(ncol(cmb)), function(j) c(cmb[1L, j], cmb[2L, j]))
+    if (e %in% test_names) test_pairs <- c(test_pairs, pl)
+    else train_pairs <- c(train_pairs, pl)
+  }
+  if (length(train_pairs) < 4L)
+    stop("too few train duplicate pairs (", length(train_pairs), ").")
+  if (!length(test_pairs))
+    stop("no test duplicate pairs; increase data or test_size.")
+
+  train_i <- vapply(train_pairs, `[`, integer(1L), 1L)
+  train_j <- vapply(train_pairs, `[`, integer(1L), 2L)
+  model <- er_train_retriever(X, train_i, train_j, seed = seed, ...)
+  E <- er_embed_records(model, X)
+  n <- nrow(X)
+  k <- max(1L, min(as.integer(k), n - 1L))
+  # chunked top-K retrieval over all records (as in production)
+  chunk <- 1000L
+  seen <- new.env(hash = TRUE, parent = emptyenv())
+  for (s in seq(1L, n, by = chunk)) {
+    e <- min(s + chunk - 1L, n)
+    S <- E[s:e, , drop = FALSE] %*% t(E)
+    rows <- s:e
+    S[cbind(seq_along(rows), rows)] <- -Inf
+    kk <- min(k, n - 1L)
+    for (r in seq_along(rows)) {
+      top <- order(S[r, ], decreasing = TRUE)[seq_len(kk)]
+      i <- rows[r]
+      for (j in top) {
+        a <- min(i, j); b <- max(i, j)
+        seen[[paste(a, b, sep = "-")]] <- TRUE
+      }
+    }
+  }
+  cand <- ls(seen)
+  test_keys <- vapply(test_pairs, function(p) {
+    paste(min(p), max(p), sep = "-")
+  }, character(1L))
+  list(recall = mean(test_keys %in% cand),
+       k = k,
+       n_pairs = length(cand),
+       n_train_pairs = length(train_pairs),
+       n_test_pairs = length(test_pairs),
+       n_train_entities = length(entities) - n_test,
+       n_test_entities = n_test)
 }
