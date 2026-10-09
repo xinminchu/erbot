@@ -50,10 +50,12 @@ er_read_pipe_or_fix <- function(path) {
 #' a built-in benchmark keyword:
 #' \describe{
 #'   \item{\code{"cora"}}{CORA bibliographic dataset (requires \pkg{cora}).}
-#'   \item{\code{"affiliation"}}{Affiliation strings dataset bundled with
-#'     \pkg{erbot} (\code{inst/extdata/affiliation.csv}).}
-#'   \item{\code{"d10k"}}{Synthetic 10 000-record dataset bundled with
-#'     \pkg{erbot} (\code{inst/extdata/d10k.csv}).}
+#'   \item{\code{"affiliation"}}{Affiliation strings dataset. Looks for
+#'     \code{inst/extdata/affiliation.csv} (or \code{data/affiliation.csv});
+#'     if absent, supply the file path directly.}
+#'   \item{\code{"d10k"}}{Synthetic 10 000-record dataset. Looks for
+#'     \code{inst/extdata/d10k.csv} (or \code{data/10Kfull.csv});
+#'     if absent, supply the file path directly.}
 #'   \item{\code{"restaurant"}}{Fodors-Zagats restaurant linkage dataset.
 #'     Requires \code{data/restaurant.csv} built via \code{\link{er_build_restaurant}}.}
 #'   \item{\code{"dblp_acm"}}{DBLP-ACM bibliographic linkage dataset.
