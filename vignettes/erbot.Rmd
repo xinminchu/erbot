@@ -146,8 +146,7 @@ Computes per-field similarities **only on candidate pairs**, stored as a
 named list of numeric vectors (`sim_list`).  Key properties:
 
 - **NA-aware**: if either value is missing, the field contributes no signal
-  rather than a spurious 0.  (The B-01 class of bugs — NA/empty-string
-  crashes in similarity code — was fixed in the 2026-10-06 forging pass.)
+  rather than a spurious 0.
 - **Per-field methods**: Jaro–Winkler (`jw`) for names, TF-IDF cosine for
   long text, normalized numeric distance, exact match for codes.  The spec
   can come from `er_diagnose()` or be supplied by hand.
@@ -212,10 +211,8 @@ When truth is supplied, a 14-column metric table per method:
 
 - **External**: ARI, AMI, B-cubed precision/recall/F, pairwise
   precision/recall/F, homogeneity, completeness, V-measure.
-- Label alignment is done **by record name**, never by position — the
-  silent-misalignment bug (B-04, fixed 2026-10-06) that once invalidated all
-  reported numbers cannot recur: a length check against the ID vector is
-  enforced.
+- Label alignment is done **by record name**, never by position, with a
+  length check against the ID vector enforced.
 
 Without truth, `er_unsupervised_quality()` reports within/between
 similarity, the similarity gap, and silhouette.
@@ -229,8 +226,8 @@ performance are written to CSV.
 
 ## 5. Honesty discipline: how the package prevents fooling yourself
 
-This is the part the 2026-10-06 forging pass was about, and it deserves its
-own section because most ER toolkits get it wrong.
+Getting evaluation right is where most ER toolkits stumble. This section
+describes the discipline built into the package.
 
 1. **Truth never drives model selection by default.**
    `supervised_selection = FALSE` is the default.  Truth is used for
@@ -352,23 +349,6 @@ er_evaluate(list(louvain = labs), truth = truth, id_vec = df$id)
 | Scenarios/demos | `er_list_scenarios()`, `er_run_scenario()`, `er_scenario_presets()` |
 | Reporting | `er_save_report_pdf()`, `er_draw_table()`, `print.er_result()` |
 | Datasets | `er_build_restaurant()`, `er_build_dblp_acm()`, `er_load_gold()` |
-
-## 9. Notes for the 2026-10-09 advisor meeting
-
-What changed since the 10-02 meeting (the forging pass, all verified —
-199 tests, 0 failures, 0 warnings, run by Sam on Windows):
-
-- **Phase 1 (blockers)**: NA/empty-string crashes fixed; evaluation label
-  alignment fixed (old numbers were silently wrong); blocking OOM guard;
-  ARI-on-disjoint-sets rewritten; DESCRIPTION/NAMESPACE/LICENSE consistent.
-- **Phase 2 (honesty)**: `supervised_selection` flag; truth no longer drives
-  *k*-tuning or method choice by default; `er_tune()` and `er_protocol_b()`
-  use true held-out entity splits; `er_cv()` splits by entity.
-- **Phase 3 (engineering)**: RNG hygiene; sparse-matrix guards (n > 5000);
-  explicit export list; experimental neural code isolated to `R/experimental/`.
-- **Phase 4 (classifiers)**: advisor's 11 supervised classifiers fused into
-  the package (Firth-penalized logistic as default); validity gating with
-  honest `valid = FALSE` fallbacks.
 
 ```{r session, eval = FALSE}
 sessionInfo()
