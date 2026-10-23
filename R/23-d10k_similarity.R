@@ -1,7 +1,6 @@
 ########################################
 # File: R/23-d10k_similarity.R
-# D10K synthetic similarity layer: parse the "Aggregate Value" column into
-# field-like columns and build per-field similarities on top.
+# Advisor-feedback Item 4a (2026-10-01): D10K synthetic similarity matrix.
 #
 # Current state of the repo: er_load("d10k") keeps only Id + Aggregate Value
 # (renamed to `text`), because the raw file is pipe-delimited and carries

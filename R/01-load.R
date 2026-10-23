@@ -50,16 +50,17 @@ er_read_pipe_or_fix <- function(path) {
 #' a built-in benchmark keyword:
 #' \describe{
 #'   \item{\code{"cora"}}{CORA bibliographic dataset (requires \pkg{cora}).}
-#'   \item{\code{"affiliation"}}{Affiliation strings dataset. Looks for
-#'     \code{inst/extdata/affiliation.csv} (or \code{data/affiliation.csv});
-#'     if absent, supply the file path directly.}
-#'   \item{\code{"d10k"}}{Synthetic 10 000-record dataset. Looks for
-#'     \code{inst/extdata/d10k.csv} (or \code{data/10Kfull.csv});
-#'     if absent, supply the file path directly.}
+#'   \item{\code{"affiliation"}}{Affiliation strings dataset bundled with
+#'     \pkg{erbot} (\code{inst/extdata/affiliation.csv}).}
+#'   \item{\code{"d10k"}}{Synthetic 10 000-record dataset bundled with
+#'     \pkg{erbot} (\code{inst/extdata/d10k.csv}).}
 #'   \item{\code{"restaurant"}}{Fodors-Zagats restaurant linkage dataset.
 #'     Requires \code{data/restaurant.csv} built via \code{\link{er_build_restaurant}}.}
 #'   \item{\code{"dblp_acm"}}{DBLP-ACM bibliographic linkage dataset.
 #'     Requires \code{data/dblp_acm.csv} built via \code{\link{er_build_dblp_acm}}.}
+#'   \item{\code{"musicbrainz20k"}}{MusicBrainz 20K multi-source music dataset
+#'     (Leipzig). Requires \code{data/musicbrainz20k.csv} built via
+#'     \code{\link{er_build_musicbrainz}}.}
 #' }
 #'
 #' @param data A \code{data.frame}, a character file path, or a benchmark
@@ -172,6 +173,20 @@ er_load <- function(data, sheet = NULL) {
         stop("DBLP-ACM dataset not found. Download from the DeepMatcher ",
              "benchmark and run er_build_dblp_acm() to build ",
              "data/dblp_acm.csv. See ?er_build_dblp_acm for details.")
+    )
+    df <- tibble::as_tibble(data.table::fread(path, showProgress = FALSE))
+    names(df) <- tolower(names(df))
+    return(df)
+  }
+
+  if (key == "musicbrainz20k") {
+    path <- tryCatch(
+      .find_file("musicbrainz20k.csv", c("musicbrainz20k.csv")),
+      error = function(e)
+        stop("MusicBrainz 20K dataset not found. Download ",
+             "musicbrainz-20-A01.csv.dapo from the Leipzig Database Group ",
+             "benchmark page and run er_build_musicbrainz() to build ",
+             "data/musicbrainz20k.csv. See ?er_build_musicbrainz for details.")
     )
     df <- tibble::as_tibble(data.table::fread(path, showProgress = FALSE))
     names(df) <- tolower(names(df))

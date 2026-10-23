@@ -1,0 +1,3 @@
+source_path,destination_path,action,classification,reason,collision_status,content_change_required,validation_method,completed
+R/run_eval_report.R,scripts/experiments/run_eval_report.R,move,Candidate source requiring review,Experiment-style runner with hard-coded absolute path,none,yes,parse and path audit,yes
+Dissertation_Thesis2024UMB/,archive/legacy_untrusted/Dissertation_Thesis2024UMB/,move,Legacy untrusted material,Untracked historical thesis material,none,yes,filesystem inventory,yes

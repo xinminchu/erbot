@@ -1,0 +1,9 @@
+path,type,size_bytes,git_status,classification,generated,reproducible,trusted,contains_absolute_path,recommended_destination,recommended_action,reason,risk_level
+R/,directory,0,tracked,Canonical source,False,True,True,False,R/,keep,Core package source,low
+R/run_eval_report.R,file,0,tracked,Candidate source requiring review,False,True,False,True,scripts/experiments/,move,Contains hard-coded absolute path and experiment-style runner,high
+tests/,directory,0,tracked,Test or validation asset,False,True,True,False,tests/,keep,Package test suite,low
+paper/,directory,0,tracked,Paper source,False,False,False,False,paper/,keep,Contains paper and LaTeX sources,medium
+data/,directory,0,tracked,Raw data,False,False,True,False,data/raw/,review,Contains benchmark assets and should be organized by provenance,medium
+results/,directory,0,tracked,Generated result,True,False,False,False,results/,keep,Generated outputs directory,medium
+Dissertation_Thesis2024UMB/,directory,0,untracked,Legacy untrusted material,False,False,False,False,archive/legacy_untrusted/,quarantine,Untracked thesis materials outside the canonical structure,medium
+results/ERreports/,directory,0,untracked,historical_reference_excluded,False,False,False,False,results/ERreports/,keep local and untracked,Historical personal reference material only; excluded from version control and from research evidence by user decision; exclusion is not a reproducibility defect,low

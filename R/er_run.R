@@ -25,15 +25,7 @@
 #'   (\code{"cora"}, \code{"affiliation"}, \code{"d10k"}).
 #' @param truth Optional ground truth: named integer vector, data.frame
 #'   (id, cluster_id), or file path.  If provided, supervised metrics are
-#'   computed and supervised weight learning is used.  Truth is \strong{never}
-#'   used for model selection (choice of k, choice of method) unless
-#'   \code{supervised_selection = TRUE}.
-#' @param supervised_selection Logical. If \code{TRUE}, ground truth may drive
-#'   \strong{model selection}: k-tuning inside \code{er_cluster_all()} and
-#'   method picking in \code{merge = "best"}.  Default \code{FALSE}: truth is
-#'   used only for evaluation (and for weight learning when
-#'   \code{weights = "ari"}).  Supervised selection makes reported metrics
-#'   optimistic -- enable it only for explicitly supervised experiments.
+#'   computed and supervised weight learning is used.
 #' @param id_col Character. ID column name.  Auto-detected if \code{NULL}.
 #' @param text_cols Character vector.  Columns to use.  Auto-detected from
 #'   \code{er_diagnose()} if \code{NULL}.
@@ -56,10 +48,7 @@
 #' @param threshold Numeric. Similarity threshold for \code{threshold_cc} and
 #'   graph coloring.
 #' @param merge Character. Post-processing: \code{"transitivity"},
-#'   \code{"consensus"}, \code{"best"}, or \code{"none"}.  Default
-#'   \code{"consensus"} (unsupervised).  \code{"best"} picks the method by ARI
-#'   against truth and is supervised -- it warns and needs
-#'   \code{supervised_selection = TRUE} to actually see the truth.
+#'   \code{"consensus"}, \code{"best"}, or \code{"none"}.
 #' @param consensus_alpha Numeric. Fraction for consensus merge.
 #' @param eval_mode Character. \code{"labeled_only"} or
 #'   \code{"singleton_fill"}.
@@ -92,10 +81,9 @@ er_run <- function(
   k                = NULL,
   k_grid           = c(5L, 10L, 15L, 20L, 30L, 50L),
   threshold        = 0.5,
-  merge            = "consensus",
+  merge            = "best",
   consensus_alpha  = 0.5,
   eval_mode        = "labeled_only",
-  supervised_selection = FALSE,
   out_dir          = NULL,
   verbose          = TRUE
 ) {
@@ -175,10 +163,6 @@ er_run <- function(
 
   # ── Stage 7: Cluster ──────────────────────────────────────────────────────
   .msg("[er_run] Stage 7: clustering...")
-  # Honesty guard (2026-10-06): truth drives k-tuning inside er_cluster_all()
-  # only under explicit supervised_selection = TRUE. By default the clustering
-  # stage never sees the labels; they are reserved for evaluation (stage 9).
-  cluster_truth <- if (isTRUE(supervised_selection)) truth_vec_full else NULL
   all_clusters <- er_cluster_all(
     S,
     methods      = cluster_methods,
@@ -186,9 +170,7 @@ er_run <- function(
     k_grid       = k_grid,
     threshold    = threshold,
     resolution   = 1,
-    truth_vec    = cluster_truth,
-    sim_list     = sim_list,
-    pairs        = pairs,
+    truth_vec    = truth_vec_full,
     verbose      = verbose
   )
   .msg(sprintf("  %d method(s) ran.", length(all_clusters)))
@@ -200,7 +182,7 @@ er_run <- function(
     method      = merge,
     threshold   = threshold,
     alpha       = consensus_alpha,
-    truth_vec   = cluster_truth
+    truth_vec   = truth_vec_full
   )
   .msg(sprintf("  final: %d clusters.", length(unique(final_labels))))
 

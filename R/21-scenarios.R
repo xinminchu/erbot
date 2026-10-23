@@ -1,19 +1,20 @@
 ########################################
 # File: R/21-scenarios.R
-# Scenario-based entry points.
+# Advisor-feedback Item 1 (2026-10-01): clean, scenario-based entry points.
 #
-# Goal: anyone can ask for one named situation ("run the smoke scenario on
-# CORA", "run the full pipeline on a new dataset") and either get the result
-# or get an error that states the failing stage, the likely reason, and the
-# next repair step -- not just a stack trace.
+# Goal: the advisor can ask for one named situation ("run the smoke scenario on
+# CORA", "run the full pipeline on MusicBrainz") and either get the result or
+# get an error that states the failing stage, the likely reason, and the next
+# repair step -- not just a stack trace.
 #
 # This file does NOT replace er_run(). It wraps it with:
 #   * er_scenario_presets()  -- named, documented presets
 #   * er_run_scenario()      -- one call: preset + data (+ overrides)
 #   * er_explain_error()     -- stage / reason / next_step for common failures
 #
-# A preset name fully determines the pipeline configuration, so "the smoke
-# run on CORA" means the same thing to everyone; see er_scenario_presets().
+# The v3 report's Scenario 1 / Scenario 3 harness is not in this repository;
+# presets here cover the erbotv2 pipeline only. See
+# docs/advisor-feedback-2026-10-01.md for the gap statement.
 ########################################
 
 #' List the named ERBOT scenario presets
@@ -43,7 +44,7 @@ er_scenario_presets <- function() {
       "threshold_cc,louvain,leiden"
     ),
     weights = c("equal", "auto", "auto", "equal"),
-    merge = c("consensus", "consensus", "consensus", "consensus"),
+    merge = c("best", "best", "consensus", "best"),
     recommended_use = c(
       "First run on any new dataset; should finish in seconds to a few minutes.",
       "Exploring which methods are admissible before a full run.",
@@ -76,12 +77,12 @@ er_list_scenarios <- er_scenario_presets
     smoke = list(
       weights = "equal",
       cluster_methods = c("threshold_cc", "louvain"),
-      merge = "consensus"
+      merge = "best"
     ),
     screening = list(
       weights = "auto",
       cluster_methods = "all",
-      merge = "consensus"
+      merge = "best"
     ),
     full = list(
       weights = "auto",
@@ -91,13 +92,13 @@ er_list_scenarios <- er_scenario_presets
     unsupervised_quick = list(
       weights = "equal",
       cluster_methods = c("threshold_cc", "louvain", "leiden"),
-      merge = "consensus"
+      merge = "best"
     )
   )
   utils::modifyList(base, extra)
 }
 
-#' Explain an ERBOT failure in plain, actionable form
+#' Explain an ERBOT failure in advisor-readable form
 #'
 #' Converts an error into a structured explanation: which stage failed, the
 #' likely reason, and the next repair step. Used by \code{er_run_scenario()},
@@ -128,7 +129,7 @@ er_explain_error <- function(e, stage = NULL) {
 
   if (grepl("not found|no such file|cannot open|does not exist", low)) {
     reason <- "A required file or built-in dataset could not be found."
-    next_step <- "Check the path, or build the dataset first (for example er_build_restaurant(), er_build_dblp_acm()), then re-run the same command."
+    next_step <- "Check the path, or build the dataset first (for example er_build_restaurant(), er_build_dblp_acm(), er_build_musicbrainz()), then re-run the same command."
   } else if (grepl("no package called|not installed|namespace .* not available|there is no package", low)) {
     reason <- "An R package that this stage needs is not installed in this R environment."
     next_step <- "Install the named package in the same R environment that VS Code / Rscript is using, restart R, and re-run. Confirm with quarto check / Rscript -e 'packageVersion(\"<pkg>\")' if the wrong R is being picked up."
@@ -211,9 +212,10 @@ er_run_scenario <- function(scenario = "smoke",
     c("smoke", "screening", "full", "unsupervised_quick")
   )
 
-  # Input validation with plain-language failures (reason + fix).
+  # Input validation with advisor-readable failures (Item 1: reason + fix).
   if (is.character(data) && length(data) == 1L) {
-    keywords <- c("cora", "affiliation", "d10k", "restaurant", "dblp_acm")
+    keywords <- c("cora", "affiliation", "d10k", "restaurant", "dblp_acm",
+                  "musicbrainz20k")
     if (!tolower(data) %in% keywords && !file.exists(data)) {
       .er_stop_scenario(scenario, list(
         stage = "validate inputs",

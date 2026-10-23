@@ -1,0 +1,218 @@
+---
+title: "ERBOT — Advisor Meeting, 2 October 2026"
+subtitle: "Response to the five points from 25 September: what is done, what is not, and what needs a decision"
+author: "Xinmin Chu"
+date: "2026-10-02"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    theme: flatly
+    embed-resources: true
+params:
+  dataset: "cora"
+  scenario: "smoke"
+  run_demo: false
+---
+
+```{r setup, include=FALSE}
+# This notebook is designed to render even when the erbot package cannot be
+# loaded (for example on a machine without the package installed): the
+# narrative and tables always render; only the live demo chunk needs erbot.
+find_root <- function(start = getwd()) {
+  d <- normalizePath(start, winslash = "/", mustWork = FALSE)
+  for (i in 1:6) {
+    if (file.exists(file.path(d, "DESCRIPTION"))) return(d)
+    parent <- dirname(d)
+    if (parent == d) break
+    d <- parent
+  }
+  NA_character_
+}
+repo_root <- find_root()
+can_run <- FALSE
+load_msg <- "erbot could not be loaded; the demo chunk will be skipped."
+if (!is.na(repo_root)) {
+  old_wd <- getwd()
+  setwd(repo_root)
+  can_run <- tryCatch({
+    if (requireNamespace("pkgload", quietly = TRUE)) {
+      pkgload::load_all(".", quiet = TRUE)
+    } else {
+      library(erbot)
+    }
+    TRUE
+  }, error = function(e) {
+    load_msg <<- paste0("erbot could not be loaded: ", conditionMessage(e))
+    FALSE
+  })
+  setwd(old_wd)
+}
+```
+
+## Purpose
+
+On 25 September the advisor gave five requests. This notebook is the response,
+organised the same way, and it is deliberately explicit about the difference
+between **done**, **implemented but not yet run**, and **not done**.
+
+Nothing in this notebook claims a run that has not happened. The live demo at
+the end is off by default (`run_demo: false`); set it to `true` in VS Code and
+re-render to run a scenario in the meeting.
+
+## Status at a glance
+
+| # | Request (25 Sep) | Status | Where |
+|---|---|---|---|
+| 1 | Clean the code: run any scenario quickly; errors explain the reason | Implemented, not yet run in VS Code | `R/21-scenarios.R`, `scripts/run_scenario.R` |
+| 2 | Understand why each success/failure happened | Done (documents) | `docs/mechanism-cards-2026-10-01.md` |
+| 3 | Raise the positive ratio (stratified sampling / append positives) | Designed + implemented as a proposal | `R/22-positive_ratio.R` |
+| 4a | Add D10K; compute the similarity matrix ourselves | Implemented; needs the real file | `R/23-d10k_similarity.R` |
+| 4b | Add MusicBrainz 20K | Implemented; needs the real file | `er_build_musicbrainz()` |
+| 5 | Paper direction: scaling vs deep learning | Brief written; decision today | `docs/paper-direction-brief-2026-10-01.md` |
+
+The full tracker is in `docs/advisor-feedback-2026-10-01.md`.
+
+## 1. Clean code: scenarios you can ask for by name
+
+The pipeline already had one entry point (`er_run()`), but no named scenarios
+and no explained errors. Four presets now exist:
+
+```{r presets}
+if (can_run) {
+  er_scenario_presets()
+} else {
+  data.frame(
+    scenario = c("smoke", "screening", "full", "unsupervised_quick"),
+    purpose = c(
+      "Verify the pipeline runs end-to-end.",
+      "Broad first pass over clustering methods.",
+      "Reportable run, consensus merging.",
+      "Fast unsupervised pass, no ground truth."
+    )
+  )
+}
+```
+
+One command runs a scenario from the repository root:
+
+```bash
+Rscript scripts/run_scenario.R --scenario smoke --data cora
+```
+
+When a run fails, the error is rewritten into three parts — **stage**,
+**reason**, **next step** — covering the failures we actually hit: missing
+files, missing packages, a label column leaking into features, pair-budget
+explosions, an all-NA model sweep, and infeasible split quotas.
+
+**Honest gap.** The Scenario 1 / Scenario 3 harness behind the v3 report is
+not in this repository (the repo contains Protocol A/B instead). That code is
+in the local VS Code workspace and still has to be merged; tonight's work
+cleans the erbotv2 interface around it.
+
+## 2. Why things succeed or fail: mechanism cards
+
+Eight cards (full text in `docs/mechanism-cards-2026-10-01.md`). The three to
+be able to say without notes:
+
+- **QDA** was refused because the two-way interaction expansion made the
+  design matrix wider than the positive class (FEBRL1: 9 features → 45
+  predictors vs 37–47 positive pairs). With interactions off, QDA fits in
+  **20/20** cells. Admissibility was a design property, not a dataset property.
+- **Logistic regression** fails differently: fitted probabilities of exactly
+  0/1 mean complete separation. No design change repairs that; a penalised fit
+  (Firth) is the right path, and it has not yet been wired in.
+- **CORA seed 6666** had the best validation ARI (0.946) and the worst test ARI
+  (0.415), with recall 0.996 but precision 0.291 — 155 missed pairs against
+  102,684 false co-clustered pairs and a 496-record predicted entity (truth:
+  199). It failed by over-merging through transitive chains, which ARI alone
+  does not reveal.
+
+The other cards cover validation ties (the recorded "winner" is a tie-breaking
+artifact over an equivalence set of up to 60 models), sparse positives
+(Restaurant test partitions hold 9–13 positive pairs), Affiliation's two-sided
+failure on a single weak feature, the candidate universe as part of the task
+definition, and what Scenario 1 vs Scenario 3 each can and cannot claim.
+
+## 3. Positive ratio: a design decision, proposed not smuggled
+
+The previous discipline — split records without looking at gold, never redraw
+a seed — exists to prevent seed-hacking. The proposed design keeps that spirit
+and makes the label use explicit and pre-registered:
+
+- Split **entities** (never records or pairs) into Fit / Validation / Test,
+  balancing record fractions and positive-pair quotas under one fixed seed.
+  Infeasible quotas error out with the achieved counts; nothing is redrawn.
+- Augment positives **only inside Fit** (resampled to a target Fit
+  prevalence), labelled simulated prevalence, reported separately forever.
+- Validation and Test always keep natural prevalence.
+
+Implemented in `R/22-positive_ratio.R` (`er_stratified_three_way_split()`,
+`er_augment_fit_pairs()`, `er_positive_ratio_report()`). **Decision needed:**
+is the label-aware pre-registered split acceptable, and should the canonical
+rule be quotas or a Fit prevalence target?
+
+## 4. New datasets
+
+**D10K.** The current loader keeps only `Id` + `Aggregate Value`, which gives
+one text field, not a similarity matrix. `R/23-d10k_similarity.R` adds the
+parsing layer (structure-aware: key=value or consistent separators, otherwise
+a single text field) and returns the combined sparse similarity matrix `S`
+through the existing NA-aware combiner. Not yet run on the real
+`10Kfull.csv`, which is not in this worktree.
+
+**MusicBrainz 20K.** Leipzig source checked: 19,375 records, 10,000 clusters,
+16,250 duplicate pairs, five sources, high-corruption DAPO duplicates.
+`er_build_musicbrainz()` splits the raw file into a model table (title,
+artist, album, year, length, language, number, source) and a gold table —
+`CID` goes to gold only and can never become a feature. `er_load()` and
+`er_load_gold()` know the dataset; the catalog is updated. The raw header is
+verified (comma-delimited:
+`TID,CID,CTID,SourceID,id,number,title,length,artist,album,year,language`),
+though the values are messy — length can be `1m 58sec`, year can be `75` or
+`null` — so type handling is left to `er_diagnose()`. The builder itself has
+not yet run in an R environment.
+
+## 5. Paper direction
+
+Brief: `docs/paper-direction-brief-2026-10-01.md`.
+
+**Recommendation: scaling / blocking as the primary direction.** It continues
+the candidate-space work (mechanism card 7), needs the least new machinery,
+and sits where supervision is strongest. Its ownable question is the one the
+advisor raised: record-level blocking and pair-level blocking are different
+objects, and a method contribution has to respect that distinction rather
+than produce another benchmark table.
+
+Deep learning stays warm with one cheap probe: an embedding view on
+Affiliation — the dataset whose single weak feature fails in both directions —
+under the existing protocol. A large, explainable gain there would justify a
+second paper or a pivot.
+
+## Live demo (off by default)
+
+Set `run_demo: true` above (and `dataset` / `scenario` if wanted) and
+re-render to run the pipeline here, in the meeting.
+
+```{r demo}
+if (isTRUE(params$run_demo) && can_run) {
+  res <- er_run_scenario(params$scenario, data = params$dataset, verbose = TRUE)
+  cat(sprintf("Scenario '%s' on '%s': %d records, %d clusters.\n",
+              params$scenario, params$dataset,
+              nrow(res$predictions), length(unique(res$clusters))))
+  if (!is.null(res$performance)) print(res$performance)
+} else if (isTRUE(params$run_demo)) {
+  cat(load_msg, "\n")
+} else {
+  cat("Demo skipped (run_demo = false). Set run_demo: true and re-render to run it.\n")
+}
+```
+
+## Decisions to ask for today
+
+1. Positive-ratio design (Item 3): label-aware pre-registered split — acceptable?
+   Quotas or Fit prevalence target as the canonical rule?
+2. Paper direction (Item 5): scaling/blocking as primary, deep learning as the
+   Affiliation probe — or the other way around?
+3. D10K (Item 4a): confirm the canonical raw file (`10Kfull.csv`) so the
+   similarity layer can be run and checked against its real format.

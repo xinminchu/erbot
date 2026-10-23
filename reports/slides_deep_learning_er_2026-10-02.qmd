@@ -1,0 +1,194 @@
+---
+title: "Deep Learning for Entity Resolution: A Literature Review"
+subtitle: "Advisor Meeting — October 2026"
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+    navigation-mode: linear
+    controls: true
+    progress: true
+    center: false
+    width: 1280
+    height: 720
+    smaller: true
+    scrollable: true
+embed-resources: true
+---
+
+## Three Waves of Deep Learning in ER
+
+1. **2017–2019 — Learned representations.** DeepER, DeepMatcher replace handcrafted similarity features with learned tuple/attribute representations (RNNs over word embeddings).
+2. **2020–2022 — Pretrained LMs + learned blocking.** Ditto reframes matching as sequence-pair classification (up to ~+30% F1); AutoBlock / DeepBlocker make dense, label-free candidate generation practical.
+3. **2022–2026 — LLMs.** From "train a matcher" to "prompt a matcher": few-shot GPT-3 beats fine-tuned Ditto on 4/7 datasets.
+
+**Takeaway for direction choice:** pairwise *matcher* accuracy on small benchmarks is saturated. The frontier moved to **systems** questions — blocking, scale, cost.
+
+---
+
+## Wave 1a: DeepER (Ebraheem et al., PVLDB 2018)
+
+- Compose each tuple into a distributed vector with uni-/bi-directional **LSTMs over word embeddings** (GloVe or task-tuned).
+- Score tuple similarity on vectors — **no handcrafted features**.
+- Blocking: **LSH over tuple vectors**, using *all* attributes instead of a few hand-picked blocking keys.
+- Outperformed prior solutions on benchmark, biomedical, and multilingual datasets, with less labeled data.
+
+---
+
+## Wave 1b: DeepMatcher (Mudgal et al., SIGMOD 2018)
+
+- Formalized neural EM as a **design space**: attribute embedding → summarization → alignment → aggregation → classification.
+- Shipped as an **open-source Python package** inside the Magellan EM workflow (blocking → sampling → labeling → matching).
+- Findings:
+  - Deep models beat classical ML (RF/SVM over similarity features) on **textual and dirty** data.
+  - But they need **large amounts of labeled data** and struggle on **structured/numeric** attributes.
+  - Hybrid neural + classical is strongest.
+- Side effect: standardized the **Magellan benchmark datasets** as the field's eval suite.
+
+---
+
+## Wave 2a: Ditto (Li et al., PVLDB 2020) — the strong baseline
+
+- Cast EM as **sequence-pair classification**: serialize record as `COL attr VAL value …`, concatenate pair with `[SEP]`, fine-tune BERT/RoBERTa cross-encoder on `[CLS]`.
+- Three optimizations: (1) **domain-knowledge injection** (highlight numbers, IDs, names); (2) **TF-IDF summarization** of long strings; (3) **label-preserving data augmentation**.
+- Results:
+  - Up to **~30% F1 over prior SOTA**; matches prior SOTA with **≤ ½ the labels**.
+  - Real deployment (789K × 412K company matching): **96.5% F1**, where good blocking gave **3.8× end-to-end speedup**.
+- Every later matcher paper compares against Ditto. "Beat Ditto on Abt-Buy" is a hard sell today.
+
+---
+
+## Benchmarks: why the classic suite is saturated
+
+| Dataset | Domain | Labeled pairs |
+|---|---|---|
+| Amazon-Google | software | 11,460 |
+| DBLP-ACM / DBLP-Scholar | citations | 12,363 / 28,707 |
+| Walmart-Amazon | electronics | 10,242 |
+| Abt-Buy | products | 9,575 |
+| iTunes-Amazon | music | **539** |
+
+- Newer, larger: **WDC Training** (26M offers, 20.7M positive pairs), **WDC Products** (multi-dimensional robustness), **Machamp** (heterogeneous schemas, CIKM 2021).
+- The classic suite is **tiny and overused** — near-saturation and overfitting are real concerns.
+
+---
+
+## Wave 2b: Learned Blocking (2020–2024)
+
+Blocking has opposite economics from matching: it needs very high **recall** (a missed match is unrecoverable) at extreme efficiency — and its output **prices the matcher**.
+
+- **AutoBlock** (WSDM 2020): similarity-preserving representation learning + NN search; sub-quadratic, millions of records; no blocking-key engineering.
+- **DeepBlocker** (PVLDB 2021): design space of 8 **self-supervised** deep blockers (no labels) + ANN search — the label-free dense-blocking recipe.
+- **SC-Block** (ESWC 2024): supervised contrastive learning + FAISS/HNSW; **candidate sets ~50% smaller**, pipelines **1.5–4× faster**, no F1 loss; new WDC-Block benchmark (200B max pairs).
+- **UniBlocker** (arXiv 2024): **universal** dense blocker — contrastive pretraining on generic tabular data, no per-domain tuning; **complementary to sparse blocking** (union improves recall).
+- Consensus: dense buys semantic recall (synonyms, paraphrase); sparse is cheap and strong on surface overlap — **run both, union them**.
+
+---
+
+## Label Efficiency: attacking the annotation bottleneck
+
+- **ZeroER** (SIGMOD 2020): zero labels — fit a GMM over similarity vectors to separate matches/unmatches; comparable to supervised on 5 benchmarks.
+- **Transfer + active learning** (Kasai et al., ACL 2019): learn in high-resource setting, adapt with a few actively selected examples — **order of magnitude fewer labels**.
+- **Sudowoodo** (ICDE 2023): contrastive self-supervised pretraining; **one shared embedder serves both the blocker (NN retrieval) and the matcher**.
+- **DADER** (SIGMOD 2022): domain adaptation from labeled source ER datasets to unlabeled targets (six DA strategies).
+
+---
+
+## Wave 3a: Prompting LLMs for Matching (2022–2025)
+
+- **Narayan et al. (PVLDB 2022):** GPT-3 **few-shot beat fully fine-tuned Ditto on 4/7 EM datasets** with a handful of demonstrations.
+- **Peeters & Bizer (ADBIS 2023):** zero-shot ChatGPT reached **82.35% F1** where RoBERTa needed 2,000 training examples to match; similarity-based demo selection +7.85%.
+- **MatchGPT (EDBT 2025):** systematic study — best LLMs rival fine-tuned PLMs with zero/few examples; key edge is **robustness to unseen entities** (fine-tuned PLMs memorize training entities); **no single best prompt** — must tune per model × dataset; GPT-4 can diagnose labeling errors.
+
+---
+
+## Wave 3b: Small Fine-tuned LLMs — the cost answer
+
+- **AnyMatch** (arXiv 2024): zero-shot EM with a fine-tuned **GPT-2 (124M)** + smart data selection.
+  - 2nd-highest overall F1 across 9 benchmarks vs 13 baselines.
+  - Within **4.4%** of MatchGPT/GPT-4 at **3,899× lower** inference cost.
+- **Jellyfish** (EMNLP 2024): instruction-tuned open models (7B–13B) on data-prep tasks incl. EM; competitive with GPT-3.5/4, runs on a single local GPU — the **self-hostable, privacy-preserving** matcher archetype.
+
+---
+
+## Beyond Pairwise Calls — and LLM Blocking
+
+- **LLM-CER** (arXiv 2025): LLM performs **in-context clustering** over record sets (next-record-set creation, misclustering guardrail, transitivity-aware merge).
+- **Retrieve–Match–Escalate** (2026): production cascade — per-record top-20 retrieval, cheap cross-encoder routes by confidence, only the ambiguous band escalates to an agentic VLM. Blocking/recall **explicitly bounds the funnel**.
+- **Consensus on LLM blocking:** LLMs are prohibitively expensive for blocking (quadratic pairs × per-pair cost) — use them **selectively post-blocking**.
+- **Shah et al. (Algorithms 2025):** blocking + fine-tuned LLaMA3/BERT improves **both runtime and F1** over LLM-only linkage. **Blocking remains critical in the LLM era.**
+
+---
+
+## Scalability: record-level vs pair-level blocking
+
+- **Candidate generation prices the matcher.** With cross-encoder / LLM matchers, per-pair inference dominates — candidate-set size (and recall) is the scaling lever.
+- **Record-level blocking:** per record, retrieve a bounded **top-k** (e.g., ANN k-NN over tuple embeddings). Volume O(n·k) — **predictable**, index-friendly, with a recall-vs-cost knob (**k**).
+- **Pair-level blocking:** emit candidate **pairs** directly (e.g., all pairs co-occurring in key-based blocks). Volume is hard to bound and explodes on skewed blocks.
+- **Why it matters:** expensive matchers need bounded, per-record candidate budgets — record-level maps cleanly onto ANN infrastructure; pair-level enumeration has no such knob.
+- Metrics: Pairs Completeness (recall), Reduction Ratio, Pairs Quality (Papadakis et al., ACM CSUR 2020).
+
+---
+
+## Graph NNs: a smaller, specialized thread
+
+Collective signals (transitivity, shared attributes/neighbors) that pairwise classifiers ignore:
+
+- **HierGAT** (SIGMOD 2022): token → attribute → entity graph attention; attention surfaces discriminative tokens per decision.
+- **GraLMatch** (EDBT 2025): **post-hoc** graph correction — build a graph from Ditto's predictions, remove false positives via transitivity constraints.
+- **GraphER** (arXiv 2024): hybrid rule + learning — graph differential dependencies guide GNN representation learning; best on graph ER, competitive on relational.
+- Theory is just beginning (GNN expressivity hierarchy for ER).
+
+---
+
+## Open Problems
+
+1. **Blocking for the LLM era** — bounded per-record candidate sets for expensive matchers; learned sparse–dense hybrid blocking.
+2. **Universal / zero-config blocking** — recall guarantees, automatic configuration, principled fusion of sparse and dense signals.
+3. **Realistic large benchmarks** — WDC-Block is a start; missing: dirty multilingual, temporal, multimodal ER; evaluation on realistic post-blocking distributions.
+4. **Collective ER at scale** — joint inference over clusters with guarantees, not post-hoc patches.
+5. **Cost, calibration, trust** — per-pair LLM cost/throughput, prompt sensitivity, score calibration, privacy (hosted vs local), data contamination.
+6. **Hard cases** — jargon-heavy domains, schema drift, identifier-heavy records where semantic models underperform symbolic ones.
+7. **Fairness/bias** — blocking keys and embeddings vs protected attributes: essentially unstudied.
+
+---
+
+## Saturated vs Open
+
+| Sub-area | Verdict |
+|---|---|
+| Supervised pairwise matching on Magellan-size benchmarks | **Saturated** — Ditto (2020) is a strong, simple ceiling |
+| LLM prompting recipes for pairwise matching | **Crowded** — headline findings established (2023–2025) |
+| Learned dense blocking (self-supervised + ANN) | **Open, high-impact** — recall–cost tradeoffs unsettled; universal blockers new; blocking *for* LLM matchers wide open |
+| Scaling ER end-to-end | **Open** — cost models, cascades, large-scale evaluation just emerging |
+| Collective / graph-structured ER | **Open** — young theory, young methods |
+| Label-efficient ER | **Partially open** — active learning for *blocking config* underexplored |
+| Trustworthy ER (calibration, fairness, privacy) | **Open** — barely studied |
+
+---
+
+## Recommendation: choose Scaling / Blocking
+
+- A **scaling/blocking paper** has clearer headroom, a more direct industry audience, and **composes with** — rather than competes against — every matcher advance.
+- The more expensive matchers get (LLMs), the more valuable blocking becomes: it prices the whole pipeline.
+- If going the matcher route anyway, aim at an **unsolved axis**: OOD / unseen entities, identifier-heavy domains, multimodality, calibration — not another point of F1 on DBLP-ACM.
+- Required: **method innovation, not benchmarking** — e.g., principled recall guarantees for learned blocking, cost-aware cascades, universal blockers with bounded per-record budgets.
+
+---
+
+## Selected References
+
+- Ebraheem et al., DeepER — PVLDB 2018
+- Mudgal et al., DeepMatcher — SIGMOD 2018
+- Li et al., Ditto — PVLDB 2020
+- Zhang et al., AutoBlock — WSDM 2020
+- Thirumuruganathan et al., DeepBlocker — PVLDB 2021
+- Wu et al., ZeroER — SIGMOD 2020
+- Tu et al., DADER — SIGMOD 2022
+- Narayan et al., "Can Foundation Models Wrangle Your Data?" — PVLDB 2022
+- Peeters & Bizer, "Using ChatGPT for Entity Matching" — ADBIS 2023
+- Brinkmann et al., SC-Block — ESWC 2024
+- Wang et al., UniBlocker — arXiv:2404.14831
+- Peeters et al., MatchGPT — EDBT 2025
+- Shah et al., "The Critical Role of Blocking" — Algorithms 2025
+- Surveys: Barlaug & Gulla (TKDD 2021); Papadakis et al. (CSUR 2020)

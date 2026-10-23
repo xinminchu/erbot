@@ -26,7 +26,6 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
-VignetteBuilder: knitr
 Depends: R (>= 4.1)
 Imports:
     data.table,
@@ -40,7 +39,7 @@ Imports:
     readxl,
     text2vec,
     Matrix,
-    irlba (<= 2.3.5.1),
+    irlba,
     stringdist,
     igraph,
     FNN,
@@ -57,23 +56,15 @@ Suggests:
     mclust,
     aricode,
     GCMER,
-    ggplot2,
-    gridExtra,
-    text,
-    e1071,
-    xgboost,
+    torch,
     leidenbase,
     RANN,
     proxy,
+    RSpectra,
     peakRAM,
     dbscan,
     textreuse,
     knitr,
-    rmarkdown,
-    brglm2,
-    randomForest,
-    MASS,
-    rpart,
-    nnet
+    rmarkdown
 Remotes:
     ddegras/GCMER

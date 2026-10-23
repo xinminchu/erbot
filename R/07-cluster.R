@@ -89,15 +89,6 @@
   n <- nrow(S)
   d <- min(svd_dim, n - 1L, ncol(S) - 1L)
   if (d < 2L) return(matrix(0, n, 2))
-  # irlba rightly complains when asked for a large fraction of the spectrum
-  # ("too large a percentage of total singular values"). Take its advice:
-  # the exact dense SVD is cheaper and exact there. The n <= 5000 cap keeps
-  # this branch to problem sizes where n^2 densification is trivial; beyond
-  # it, an explicitly huge svd_dim stays on irlba with its honest warning.
-  if (n <= 5000L && 3L * d >= n) {
-    s <- svd(as.matrix(S), nu = d, nv = 0)
-    return(s$u %*% diag(s$d[seq_len(d)], nrow = d, ncol = d))
-  }
   tryCatch({
     res <- irlba::irlba(S, nv = d)
     res$u %*% diag(res$d, nrow = d, ncol = d)
@@ -109,6 +100,25 @@
 }
 
 # ── Pairwise feature helpers (for supervised methods) ─────────────────────────
+
+#' Build a feature matrix over all candidate pairs in S
+#'
+#' For each off-diagonal non-zero pair (i,j) in S, the feature vector is
+#' \code{abs(X[i,] - X[j,])}, giving a record of element-wise absolute
+#' differences in the SVD embedding space.
+#'
+#' @param S Symmetric \code{dgCMatrix}.
+#' @param X Numeric feature matrix (n x d).
+#' @return List with \code{feat} (matrix), \code{i}, \code{j} (integer vectors).
+#' @keywords internal
+.pair_features <- function(S, X) {
+  E <- Matrix::summary(S)
+  E <- E[E$i < E$j, , drop = FALSE]
+  if (!nrow(E))
+    return(list(feat = matrix(0, 0, ncol(X)), i = integer(), j = integer()))
+  feat <- abs(X[E$i, , drop = FALSE] - X[E$j, , drop = FALSE])
+  list(feat = feat, i = E$i, j = E$j)
+}
 
 #' Extract binary match labels for pairs from a truth vector
 #' @param i_vec Integer vector of first-record indices.
@@ -151,14 +161,10 @@
 #'   \code{er_pairs_to_sparse()}.
 #' @param method Character. One of \code{"hclust_avg"}, \code{"hclust_ward"},
 #'   \code{"pam"}, \code{"threshold_cc"}, \code{"louvain"}, \code{"leiden"},
-#'   \code{"label_prop"}, \code{"gc"}, or one of the supervised pairwise
-#'   classifiers in \code{er_supervised_classifiers()}.
-#'   Supervised classifiers require \code{truth_vec} for training plus
-#'   \code{sim_list} and \code{pairs} to build pair features; they train on
-#'   labeled pairs, predict match probabilities for all candidate pairs,
-#'   rebuild a similarity matrix, and apply \code{"threshold_cc"}.
-#'   \code{"logistic"} defaults to Firth's penalized likelihood, which stays
-#'   finite under complete separation where plain \code{glm()} diverges.
+#'   \code{"label_prop"}, \code{"gc"}, \code{"svm"}, \code{"gbm"}.
+#'   \code{"svm"} and \code{"gbm"} are supervised pairwise classifiers:
+#'   they require \code{truth_vec} for training and packages \pkg{e1071}
+#'   (SVM) or \pkg{xgboost} (GBM).
 #' @param k Integer. Number of clusters for centroidal methods. If
 #'   \code{NULL}, tuned automatically.
 #' @param k_grid Integer vector. Values of k to sweep during auto-tuning.
@@ -171,17 +177,7 @@
 #' @param svd_dim Integer. Number of SVD dimensions when deriving \code{X}
 #'   from \code{S}. Default \code{50}.
 #' @param truth_vec Optional integer vector of ground-truth labels (length n)
-#'   for supervised k-tuning and for training supervised classifiers.
-#'   Truth is used for training only; do not use truth-driven classifier
-#'   selection for reporting (see \code{er_tune}).
-#' @param sim_list,pairs For supervised classifiers: named list of per-field
-#'   similarity vectors and the blocking pairs data frame
-#'   (\code{idx1}/\code{idx2}), used to build pair features via
-#'   \code{er_pair_features}.
-#' @param logistic_method \code{"firth"} (default) or \code{"glm"} for the
-#'   \code{"logistic"} classifier.
-#' @param classifier_params Named list of extra hyperparameters passed to
-#'   \code{er_pair_classify} (e.g. \code{list(knn_k = 10L)}).
+#'   for supervised k-tuning.
 #' @param tune_metric Character. Metric to maximise during supervised tuning.
 #'   Default \code{"adj_rand"}.
 #'
@@ -195,17 +191,11 @@ er_cluster <- function(S, method,
                        X           = NULL,
                        svd_dim     = 50L,
                        truth_vec   = NULL,
-                       sim_list    = NULL,
-                       pairs       = NULL,
-                       logistic_method = c("firth", "glm"),
-                       classifier_params = list(),
                        tune_metric = "adj_rand") {
 
   method <- match.arg(method, c("hclust_avg", "hclust_ward", "pam",
                                  "threshold_cc", "louvain", "leiden",
-                                 "label_prop", "gc",
-                                 er_supervised_classifiers()))
-  logistic_method <- match.arg(logistic_method)
+                                 "label_prop", "gc", "svm", "gbm"))
   n <- nrow(S)
   if (n < 2L) return(rep(1L, n))
 
@@ -269,8 +259,6 @@ er_cluster <- function(S, method,
   }
 
   if (method == "gc") {
-    # GCMER needs the dense lower triangle: refuse to OOM (Phase 3).
-    .check_dense_n(n, "the GCMER distance matrix")
     if (!requireNamespace("GCMER", quietly = TRUE))
       stop("Graph Coloring requires GCMER. Install: remotes::install_github('ddegras/GCMER')")
     D <- as.matrix(1 - S)
@@ -288,47 +276,7 @@ er_cluster <- function(S, method,
     return(as.integer(ents[, 1L]))
   }
 
-  # ── Supervised pairwise classifiers ────────────────────────────────────────
-  # The advisor's eleven classifier families. Each trains on truth-labeled
-  # pairs using per-field similarities as features, predicts match
-  # probabilities for all candidate pairs, rebuilds a similarity matrix,
-  # then applies threshold_cc. Structural inapplicability (e.g. logistic
-  # non-convergence under separation) warns and falls back to louvain.
-
-  if (method %in% er_supervised_classifiers()) {
-    if (is.null(truth_vec))
-      stop(method, " requires truth_vec for supervised training.")
-    if (is.null(sim_list) || is.null(pairs))
-      stop(method, " requires sim_list and pairs to build pair features. ",
-           "See er_pair_features().")
-    feat <- er_pair_features(sim_list, pairs)
-    y   <- .pair_labels(pairs$idx1, pairs$idx2, truth_vec)
-    lab <- !is.na(truth_vec[pairs$idx1]) & !is.na(truth_vec[pairs$idx2])
-    if (sum(lab) < 10L || length(unique(y[lab])) < 2L) {
-      warning(method, ": too few labeled pairs; falling back to louvain.")
-      return(er_cluster(S, "louvain", resolution = resolution,
-                        X = X, svd_dim = svd_dim))
-    }
-    args <- c(list(features = feat[lab, , drop = FALSE], y = y[lab],
-                   classifier = method, logistic_method = logistic_method),
-              classifier_params)
-    cls <- do.call(er_pair_classify, args)
-    if (!isTRUE(cls$valid)) {
-      warning(method, ": ", cls$invalid_reason, " Falling back to louvain.")
-      return(er_cluster(S, "louvain", resolution = resolution,
-                        X = X, svd_dim = svd_dim))
-    }
-    probs <- cls$predict(feat)
-    S_new <- .probs_to_sparse(pairs$idx1, pairs$idx2, probs, n)
-    diag(S_new) <- 1
-    return(er_cluster(S_new, "threshold_cc", threshold = threshold))
-  }
-
   # ── Centroidal methods: derive feature matrix X if not supplied ───────────
-  # hclust/PAM build a dense n x n distance matrix (and hclust is O(n^3)):
-  # refuse to OOM (Phase 3). Graph methods above are sparse-safe.
-  if (method %in% c("hclust_avg", "hclust_ward", "pam"))
-    .check_dense_n(n, "the hclust/PAM distance matrix")
   if (is.null(X)) X <- .features_from_S(S, svd_dim)
 
   pick_k <- k
@@ -354,6 +302,64 @@ er_cluster <- function(S, method,
     return(as.integer(cluster::pam(stats::as.dist(D), k = pick_k)$clustering))
   }
 
+  # ── Supervised pairwise classifiers ────────────────────────────────────────
+  # Both SVM and GBM train on labeled pairs (i,j) using abs(X[i,]-X[j,]) as
+  # features, predict match probabilities for all candidate pairs, rebuild a
+  # similarity matrix, then apply threshold_cc.
+
+  if (method == "svm") {
+    if (!requireNamespace("e1071", quietly = TRUE))
+      stop("svm requires package e1071. Install: install.packages('e1071')")
+    if (is.null(truth_vec))
+      stop("svm requires truth_vec for supervised training.")
+    pf  <- .pair_features(S, X)
+    if (!nrow(pf$feat)) return(seq_len(n))
+    y   <- .pair_labels(pf$i, pf$j, truth_vec)
+    lab <- !is.na(truth_vec[pf$i]) & !is.na(truth_vec[pf$j])
+    if (sum(lab) < 10L || length(unique(y[lab])) < 2L) {
+      warning("svm: too few labeled pairs; falling back to louvain.")
+      return(er_cluster(S, "louvain", resolution = resolution,
+                        X = X, svd_dim = svd_dim))
+    }
+    n_pos <- sum(y[lab]); n_neg <- sum(lab) - n_pos
+    cw    <- c("0" = 1, "1" = max(1, n_neg / max(n_pos, 1L)))
+    fit   <- e1071::svm(pf$feat[lab, ], factor(y[lab]),
+                        kernel = "radial", probability = TRUE,
+                        scale = TRUE, class.weights = cw)
+    probs <- attr(predict(fit, pf$feat, probability = TRUE),
+                  "probabilities")[, "1"]
+    S_new <- .probs_to_sparse(pf$i, pf$j, probs, n)
+    diag(S_new) <- 1
+    return(er_cluster(S_new, "threshold_cc", threshold = threshold))
+  }
+
+  if (method == "gbm") {
+    if (!requireNamespace("xgboost", quietly = TRUE))
+      stop("gbm requires package xgboost. Install: install.packages('xgboost')")
+    if (is.null(truth_vec))
+      stop("gbm requires truth_vec for supervised training.")
+    pf  <- .pair_features(S, X)
+    if (!nrow(pf$feat)) return(seq_len(n))
+    y   <- .pair_labels(pf$i, pf$j, truth_vec)
+    lab <- !is.na(truth_vec[pf$i]) & !is.na(truth_vec[pf$j])
+    if (sum(lab) < 10L || length(unique(y[lab])) < 2L) {
+      warning("gbm: too few labeled pairs; falling back to louvain.")
+      return(er_cluster(S, "louvain", resolution = resolution,
+                        X = X, svd_dim = svd_dim))
+    }
+    n_pos  <- sum(y[lab]); n_neg <- sum(lab) - n_pos
+    spw    <- max(1, n_neg / max(n_pos, 1L))   # scale_pos_weight for imbalance
+    dtrain <- xgboost::xgb.DMatrix(pf$feat[lab, ], label = y[lab])
+    dtest  <- xgboost::xgb.DMatrix(pf$feat)
+    fit    <- xgboost::xgboost(data = dtrain, nrounds = 100L,
+                               objective = "binary:logistic",
+                               eta = 0.1, max_depth = 4L, subsample = 0.8,
+                               scale_pos_weight = spw, verbose = 0L)
+    probs  <- predict(fit, dtest)
+    S_new  <- .probs_to_sparse(pf$i, pf$j, probs, n)
+    diag(S_new) <- 1
+    return(er_cluster(S_new, "threshold_cc", threshold = threshold))
+  }
 
   rep(1L, n)   # fallback (should not reach here)
 }
@@ -379,11 +385,7 @@ er_cluster <- function(S, method,
 #' @param X Optional feature matrix for centroidal methods.
 #' @param svd_dim Integer. SVD dimensions when deriving X from S.
 #' @param truth_vec Optional integer vector of ground-truth labels for supervised
-#'   k-tuning and supervised classifiers.
-#' @param sim_list,pairs For supervised classifiers: per-field similarities and
-#'   blocking pairs; see \code{er_cluster}.
-#' @param logistic_method \code{"firth"} (default) or \code{"glm"}.
-#' @param classifier_params Named list passed to \code{er_pair_classify}.
+#'   k-tuning.
 #' @param tune_metric Character. Metric for supervised tuning.
 #'   Default \code{"adj_rand"}.
 #' @param verbose Logical. Print progress.
@@ -401,17 +403,12 @@ er_cluster_all <- function(S,
                             X                 = NULL,
                             svd_dim           = 50L,
                             truth_vec         = NULL,
-                            sim_list          = NULL,
-                            pairs             = NULL,
-                            logistic_method   = c("firth", "glm"),
-                            classifier_params = list(),
                             tune_metric       = "adj_rand",
                             verbose           = TRUE) {
 
-  logistic_method <- match.arg(logistic_method)
   all_methods <- c("hclust_avg", "hclust_ward", "pam",
                    "threshold_cc", "louvain", "leiden", "label_prop", "gc",
-                   er_supervised_classifiers())
+                   "svm", "gbm")
 
   if (identical(methods, "all")) {
     methods <- all_methods
@@ -420,34 +417,22 @@ er_cluster_all <- function(S,
       methods <- setdiff(methods, c("leiden", "louvain", "label_prop", "threshold_cc"))
     if (!requireNamespace("GCMER", quietly = TRUE))
       methods <- setdiff(methods, "gc")
-    # Supervised classifiers need truth + pair features; each also needs
-    # its own package ("" = base/recommended only).
-    sup <- er_supervised_classifiers()
-    if (is.null(truth_vec) || is.null(sim_list) || is.null(pairs)) {
-      methods <- setdiff(methods, sup)
-    } else {
-      for (cl in intersect(methods, sup)) {
-        pkg <- .classifier_pkg(cl, logistic_method)
-        if (nzchar(pkg) && !requireNamespace(pkg, quietly = TRUE))
-          methods <- setdiff(methods, cl)
-      }
-    }
+    # Supervised methods require both truth_vec and the relevant package
+    if (is.null(truth_vec) || !requireNamespace("e1071", quietly = TRUE))
+      methods <- setdiff(methods, "svm")
+    if (is.null(truth_vec) || !requireNamespace("xgboost", quietly = TRUE))
+      methods <- setdiff(methods, "gbm")
   }
 
   n <- nrow(S)
-  # Lazy SVD features: only hclust/PAM consume X. Graph and supervised methods
-  # work straight from S / pair features, so skip the wasted decomposition.
-  if (is.null(X) && any(methods %in% c("hclust_avg", "hclust_ward", "pam")))
-    X <- .features_from_S(S, svd_dim)
+  if (is.null(X)) X <- .features_from_S(S, svd_dim)
 
   results <- list()
   for (m in methods) {
     if (verbose) message("  er_cluster_all: running ", m)
     labs <- tryCatch({
       if (m == "gc" && !is.null(gc_thresholds) && length(gc_thresholds) > 1L) {
-        # Sweep GC thresholds, pick best.
-        # Dense n x n work below: refuse to OOM (Phase 3).
-        .check_dense_n(n, "the GCMER sweep matrices")
+        # Sweep GC thresholds, pick best
         D <- as.matrix(1 - S)
         D[D < 0] <- 0   # element-wise clip preserves matrix structure
         diag(D) <- 0
@@ -488,8 +473,6 @@ er_cluster_all <- function(S,
           igraph::E(g)$weight <- E$x
           # Build a distance object for silhouette scoring.
           # Force symmetry, clip negatives, extract lower triangle as plain vector.
-          # Dense n x n work: refuse to OOM (Phase 3).
-          .check_dense_n(n, "the Leiden-sweep silhouette matrix")
           Sm     <- as.matrix(S); Sm <- (Sm + t(Sm)) / 2
           Dm     <- 1 - Sm; Dm[Dm < 0] <- 0; diag(Dm) <- 0
           D_dist <- stats::as.dist(Dm)
@@ -535,11 +518,7 @@ er_cluster_all <- function(S,
         er_cluster(S, method = m, k = k, k_grid = k_grid,
                    threshold = thr, resolution = resolution,
                    X = X, svd_dim = svd_dim,
-                   truth_vec = truth_vec,
-                   sim_list = sim_list, pairs = pairs,
-                   logistic_method = logistic_method,
-                   classifier_params = classifier_params,
-                   tune_metric = tune_metric)
+                   truth_vec = truth_vec, tune_metric = tune_metric)
       }
     }, error = function(e) {
       message("  er_cluster_all: ", m, " failed: ", conditionMessage(e))
