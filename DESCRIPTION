@@ -13,10 +13,11 @@ Authors@R:
       comment = "Author of included GraphColoring code")
     )
 Description: End-to-end entity resolution (deduplication and record linkage) via a
-    nine-stage pipeline: loading, field diagnosis, blocking, per-field NA-aware
-    similarity, adaptive weighted combination (Fellegi-Sunter or ARI weights),
-    multiple clustering methods (HC, PAM, Louvain, Leiden, Graph Coloring),
-    consensus merging, and evaluation by ARI and B-cubed F-score.
+    ten-stage pipeline: loading, field diagnosis, blocking, per-field NA-aware
+    similarity, field weights (Fellegi-Sunter or ARI), NA-aware weighted
+    combination, pairwise classification, multiple clustering methods (HC, PAM,
+    Louvain, Leiden, Graph Coloring), consensus merging, and evaluation by ARI
+    and B-cubed F-score.
     Includes a full ablation framework comparing weight conditions
     (uniform, Fellegi-Sunter EM, full-data ARI, CV-learned ARI) and blocking
     conditions (no-block vs blocked), plus wrappers for external deep learning
@@ -26,6 +27,7 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
+VignetteBuilder: knitr
 Depends: R (>= 4.1)
 Imports:
     data.table,
@@ -39,7 +41,7 @@ Imports:
     readxl,
     text2vec,
     Matrix,
-    irlba,
+    irlba (<= 2.3.5.1),
     stringdist,
     igraph,
     FNN,
@@ -56,15 +58,23 @@ Suggests:
     mclust,
     aricode,
     GCMER,
-    torch,
+    ggplot2,
+    gridExtra,
+    text,
+    e1071,
+    xgboost,
     leidenbase,
     RANN,
     proxy,
-    RSpectra,
     peakRAM,
     dbscan,
     textreuse,
     knitr,
-    rmarkdown
+    rmarkdown,
+    brglm2,
+    randomForest,
+    MASS,
+    rpart,
+    nnet
 Remotes:
     ddegras/GCMER

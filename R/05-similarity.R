@@ -237,7 +237,7 @@ er_similarity <- function(data, pairs, spec = NULL, diag = NULL) {
       # Vectorised: stringdist() accepts two equal-length character vectors and
       # computes element-wise distances — no per-pair function call overhead.
       "jw" = {
-        col_c  <- as.character(col); col_c[col_c == ""] <- NA_character_
+        col_c  <- as.character(col); col_c[!is.na(col_c) & col_c == ""] <- NA_character_
         a_vals <- col_c[idx1]; b_vals <- col_c[idx2]
         mask   <- !is.na(a_vals) & !is.na(b_vals)
         result <- rep(NA_real_, n_pairs)
@@ -248,7 +248,7 @@ er_similarity <- function(data, pairs, spec = NULL, diag = NULL) {
       },
 
       "lv" = {
-        col_c  <- as.character(col); col_c[col_c == ""] <- NA_character_
+        col_c  <- as.character(col); col_c[!is.na(col_c) & col_c == ""] <- NA_character_
         a_vals <- col_c[idx1]; b_vals <- col_c[idx2]
         mask   <- !is.na(a_vals) & !is.na(b_vals)
         result <- rep(NA_real_, n_pairs)
@@ -264,14 +264,14 @@ er_similarity <- function(data, pairs, spec = NULL, diag = NULL) {
       # Jaccard and BoW require per-pair set operations; keep scalar vapply.
       "jaccard" = {
         col_c <- as.character(col)
-        col_c[col_c == ""] <- NA_character_
+        col_c[!is.na(col_c) & col_c == ""] <- NA_character_
         vapply(seq_len(n_pairs), function(k)
           .sim_jaccard(col_c[idx1[k]], col_c[idx2[k]]), numeric(1L))
       },
 
       "bow" = {
         col_c <- as.character(col)
-        col_c[col_c == ""] <- NA_character_
+        col_c[!is.na(col_c) & col_c == ""] <- NA_character_
         idf <- .bow_idf(col_c)
         vapply(seq_len(n_pairs), function(k)
           .sim_bow(col_c[idx1[k]], col_c[idx2[k]], idf), numeric(1L))
@@ -383,19 +383,11 @@ er_inject_missing <- function(sim_list, rho,
   if (!is.null(field_rho) && any(field_rho < 0 | field_rho > 1, na.rm = TRUE))
     stop("er_inject_missing: all values in field_rho must be in [0, 1].")
 
-  # BUG-19 (2026-06-12): preserve the caller's global RNG state. The same
-  # set.seed(seed) still runs, so all sampling inside this function is
-  # byte-identical to previous behaviour; only the side effect on the
-  # caller's RNG stream is removed.
-  .rng_old <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
-    get(".Random.seed", envir = globalenv(), inherits = FALSE) else NULL
-  on.exit({
-    if (!is.null(.rng_old)) {
-      assign(".Random.seed", .rng_old, envir = globalenv())
-    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-      rm(".Random.seed", envir = globalenv())
-    }
-  }, add = TRUE)
+  # RNG discipline (Phase 3, 2026-10-06): preserve the caller's global RNG
+  # state. set.seed(seed) still runs, so sampling inside is byte-identical;
+  # only the side effect on the caller's RNG stream is removed.
+  .rng_restore <- .rng_save()
+  on.exit(.rng_restore(), add = TRUE)
   set.seed(seed)
 
   result <- lapply(names(sim_list), function(fname) {

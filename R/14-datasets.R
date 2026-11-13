@@ -275,7 +275,7 @@ er_build_dblp_acm <- function(tableA_path, tableB_path, matches_path,
 #' as the \code{truth} argument throughout the ERBOT pipeline.
 #'
 #' @param dataset Character.  One of \code{"cora"}, \code{"restaurant"},
-#'   \code{"dblp_acm"}, \code{"musicbrainz20k"}.  (Affiliation and D10K use the id-mapping files
+#'   \code{"dblp_acm"}.  (Affiliation and D10K use the id-mapping files
 #'   directly; NCVR ground truth is embedded in the partition CSVs.)
 #' @return A tibble with columns \code{id} (character) and
 #'   \code{cluster_id} (integer).
@@ -299,145 +299,20 @@ er_load_gold <- function(dataset) {
       p2 <- file.path(here, "data", nm)
       if (file.exists(p2)) return(p2)
     }
-    builder <- if (key == "musicbrainz20k") "er_build_musicbrainz" else paste0("er_build_", gsub("-", "_", key))
     stop("Gold file not found: ", fname,
-         ". Run ", builder, "() first.")
+         ". Run er_build_", gsub("-", "_", key), "() first.")
   }
 
   path <- switch(key,
     cora       = .find_gold("cora_gold.csv"),
     restaurant = .find_gold("restaurant_gold.csv"),
     dblp_acm   = .find_gold("dblp_acm_gold.csv"),
-    musicbrainz20k = .find_gold("musicbrainz20k_gold.csv"),
     stop("er_load_gold: unknown dataset '", dataset,
-         "'. Supported: cora, restaurant, dblp_acm, musicbrainz20k.")
+         "'. Supported: cora, restaurant, dblp_acm.")
   )
 
   # Route through er_truth_from_any so both formats are accepted:
   #   (id, cluster_id)  — standard cluster-label format
   #   (id1, id2)        — pair-list format (e.g. cora_gold.csv from GCMER)
   er_truth_from_any(path)
-}
-
-
-# ── er_build_musicbrainz() ────────────────────────────────────────────────────
-# Advisor-feedback Item 4b (2026-10-01): MusicBrainz 20K (Leipzig).
-#
-# Unlike Restaurant / DBLP-ACM, MusicBrainz 20K is a single multi-source
-# table: one row per record, with CID as the gold cluster id. The builder
-# therefore does NOT use the two-table union-find path. It splits the raw
-# file into (a) a model table with no label columns and (b) a gold table.
-#
-# Official source: Leipzig University Database Group, "Benchmark datasets for
-# entity resolution" (Music Brainz 20K: 19,375 records, 16,250 matches,
-# 10,000 clusters, 5 sources; attributes artist, title, album, year, length).
-# Header/delimiter verified 2026-10-01 from the raw file: comma-delimited,
-# header TID,CID,CTID,SourceID,id,number,title,length,artist,album,year,
-# language. Note the raw values are messy (length can be "1m 58sec", year
-# can be "75" or "null"); type handling is left to er_diagnose().
-
-#' Build the MusicBrainz 20K benchmark files
-#'
-#' Reads the Leipzig MusicBrainz 20K \file{.dapo} file and writes
-#' \file{data/musicbrainz20k.csv} (model fields only) and
-#' \file{data/musicbrainz20k_gold.csv} (\code{id}, \code{cluster_id}).
-#' After building, \code{er_load("musicbrainz20k")} and
-#' \code{er_load_gold("musicbrainz20k")} will work.
-#'
-#' The gold cluster id (\code{CID} in the raw file) is written only to the
-#' gold file. It is never a model feature (BUG-22 leakage guard). The raw
-#' within-cluster id (\code{CTID}) and the original source id (\code{Id},
-#' not guaranteed unique) are dropped.
-#'
-#' @param dapo_path Path to \file{musicbrainz-20-A01.csv.dapo} from the
-#'   Leipzig Database Group benchmark page.
-#' @param out_dir Directory to write output files (default: \code{data/}
-#'   under the package root, or current working directory if not found).
-#' @param verbose Logical.
-#' @return Invisibly returns a named list with \code{combined} and \code{gold}
-#'   tibbles.
-#' @seealso \code{\link{er_load}}, \code{\link{er_load_gold}}
-#' @export
-er_build_musicbrainz <- function(dapo_path, out_dir = NULL, verbose = TRUE) {
-  ts <- function(...) if (verbose) message(sprintf("[er_build_musicbrainz] %s", paste0(...)))
-
-  if (!file.exists(dapo_path)) {
-    stop(paste0(
-      "er_build_musicbrainz: file not found: ", dapo_path, ". ",
-      "Reason: the Leipzig MusicBrainz 20K file has not been downloaded to this path. ",
-      "Next step: download musicbrainz-20-A01.csv.dapo from the Leipzig benchmark page ",
-      "(Database Group Leipzig, 'Benchmark datasets for entity resolution') and pass its local path."
-    ))
-  }
-
-  ts("Reading MusicBrainz 20K (.dapo, delimiter auto-detected)...")
-  raw <- data.table::fread(dapo_path, showProgress = FALSE, data.table = FALSE)
-  df <- tibble::as_tibble(raw)
-  # Normalise: lower-case, and remove spaces/underscores so SourceID -> sourceid.
-  names(df) <- gsub("[^a-z0-9]", "", tolower(names(df)))
-
-  required <- c("tid", "cid")
-  missing_cols <- setdiff(required, names(df))
-  if (length(missing_cols)) {
-    stop(sprintf(
-      paste0(
-        "er_build_musicbrainz: required column(s) missing after normalisation: %s. ",
-        "Reason: the file at '%s' does not look like the Leipzig MusicBrainz 20K .dapo file ",
-        "(expected TID and CID among: %s). ",
-        "Next step: confirm the download completed and that this is musicbrainz-20-A01.csv.dapo, not another MusicBrainz size."
-      ),
-      paste(missing_cols, collapse = ", "),
-      dapo_path,
-      paste(names(df), collapse = ", ")
-    ))
-  }
-
-  model_fields <- intersect(
-    c("title", "artist", "album", "year", "length", "language", "number"),
-    names(df)
-  )
-  if (!length(model_fields)) {
-    stop(paste0(
-      "er_build_musicbrainz: no model fields found (looked for title, artist, album, year, length, language, number). ",
-      "Reason: after normalisation the file only carries identifiers. ",
-      "Next step: check the actual header of the downloaded file against the official readme before changing this builder."
-    ))
-  }
-
-  combined <- tibble::tibble(id = as.character(df$tid))
-  if ("sourceid" %in% names(df)) {
-    combined$source <- as.character(df$sourceid)
-  }
-  for (f in model_fields) combined[[f]] <- df[[f]]
-
-  gold <- tibble::tibble(
-    id = as.character(df$tid),
-    cluster_id = as.integer(df$cid)
-  )
-
-  if (is.null(out_dir)) {
-    pkg_root <- tryCatch(
-      normalizePath(file.path(dirname(sys.frame(0)$ofile), "..")),
-      error = function(e) getwd()
-    )
-    out_dir <- file.path(pkg_root, "data")
-    if (!dir.exists(out_dir)) out_dir <- getwd()
-  }
-  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
-
-  data_path <- file.path(out_dir, "musicbrainz20k.csv")
-  gold_path <- file.path(out_dir, "musicbrainz20k_gold.csv")
-
-  ts(sprintf("Writing %s ...", data_path))
-  data.table::fwrite(combined, data_path)
-  ts(sprintf("Writing %s ...", gold_path))
-  data.table::fwrite(gold, gold_path)
-
-  n_clusters <- length(unique(gold$cluster_id))
-  ts(sprintf(
-    "Done. %d records, %d clusters, model fields: %s. CID was written to the gold file only.",
-    nrow(combined), n_clusters, paste(model_fields, collapse = ", ")
-  ))
-
-  invisible(list(combined = combined, gold = gold))
 }

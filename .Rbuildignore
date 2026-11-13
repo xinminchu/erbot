@@ -1,0 +1,13 @@
+^renv$
+^renv\.lock$
+^Literature/
+^Docs/
+^dev/
+^data-raw/
+^.*[.]pdf$
+^.*[.]Rproj$
+^\.Rproj\.user$
+^\.git$
+^\.github/
+^README[.]Rmd$
+^.*\.Rproj$

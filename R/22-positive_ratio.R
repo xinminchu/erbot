@@ -1,9 +1,9 @@
 ########################################
 # File: R/22-positive_ratio.R
-# Advisor-feedback Item 3 (2026-10-01): raise the positive ratio without
-# breaking the split discipline.
+# Pre-registered split design: raise the positive ratio without breaking the
+# split discipline.
 #
-# Design (pre-registered; a proposal for the advisor, not yet canonical):
+# Design (pre-registered):
 #   1. Split ENTITIES, never records or pairs, into Fit / Validation / Test.
 #      No entity may span two partitions.
 #   2. Gold labels may be used ONLY to design the split (balance entity-size

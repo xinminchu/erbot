@@ -11,33 +11,46 @@
 #' Build all within-block pairs from a block assignment vector
 #'
 #' @param block_vec Character or factor vector of block keys (length n).
-#' @param max_pairs Numeric. Pair budget; triggers a warning when exceeded.
+#' @param max_pairs Numeric. Pair budget; blocks that would exceed the remaining
+#'   budget are skipped (with a warning), never partially emitted.
 #' @return data.frame with columns \code{idx1}, \code{idx2} (integer, 1-based).
 #' @keywords internal
 .pairs_from_blocks <- function(block_vec, max_pairs = Inf) {
   blocks <- split(seq_along(block_vec), block_vec)
   pairs  <- vector("list", length(blocks))
   total  <- 0L
+  skipped <- 0L
+  skipped_pairs <- 0
   for (i in seq_along(blocks)) {
     idx <- blocks[[i]]
     m   <- length(idx)
     if (m < 2L) next
+    # B-02 fix (2026-10-06): estimate C(m,2) BEFORE calling combn(). combn(m,2)
+    # allocates a 2 x C(m,2) integer matrix up front, so checking the budget
+    # afterwards guarantees an OOM on a single huge block (e.g. thousands of
+    # missing keys lumped into one block). Estimate-then-skip keeps output
+    # within budget; the old truncate-mid-block behaviour was also biased
+    # (it kept alphabetically-early blocks and could still exceed max_pairs).
+    need <- as.numeric(m) * (m - 1L) / 2
+    if (total + need > max_pairs) {
+      skipped <- skipped + 1L
+      skipped_pairs <- skipped_pairs + need
+      next
+    }
     # combn() directly generates the upper-triangle pairs (C(m,2) rows)
     # without the intermediate m^2 matrix that expand.grid() would create.
     comb <- combn(m, 2L)
     pi   <- idx[comb[1L, ]]; pj <- idx[comb[2L, ]]
     total <- total + length(pi)
-    if (total > max_pairs) {
-      warning(sprintf(
-        "er_block: pair budget exceeded (%s > %s). Truncating.",
-        format(total, big.mark = ","),
-        format(max_pairs, big.mark = ",")
-      ))
-      pairs[[i]] <- data.frame(idx1 = pi, idx2 = pj)
-      break
-    }
     pairs[[i]] <- data.frame(idx1 = pi, idx2 = pj)
   }
+  if (skipped > 0L)
+    warning(sprintf(paste0("er_block: pair budget (%s) exceeded; skipped %d block(s) ",
+                           "totalling ~%s pairs. Increase 'max_pairs' or use a ",
+                           "more selective blocking key."),
+                    format(max_pairs, big.mark = ","),
+                    skipped, format(round(skipped_pairs), big.mark = ",")),
+            call. = FALSE)
   out <- do.call(rbind, pairs)
   if (is.null(out)) return(tibble::tibble(idx1 = integer(), idx2 = integer()))
   tibble::as_tibble(out)
@@ -96,8 +109,10 @@
 #'   \item{\code{"none"}}{All \eqn{\binom{n}{2}} pairs. Only suitable for
 #'     small \eqn{n} (\eqn{\le 5000}).}
 #'   \item{\code{"standard"}}{Exact match on \code{block_key} column.
-#'     Records with \code{NA} in the key are placed in a single \code{""} block
-#'     (structural fallback; they are \emph{not} imputed).}
+#'     Records with a missing (\code{NA}/\code{""}) key are excluded from
+#'     candidate pairs (each gets a unique singleton block) and reported via
+#'     \code{message()}; a missing key carries no blocking information, so
+#'     pairing such records against each other would only add noise.}
 #'   \item{\code{"prefix"}}{First \code{prefix_len} characters of
 #'     \code{block_key} (after lower-casing and normalisation).}
 #'   \item{\code{"sn"}}{Sorted-neighborhood on \code{block_key}: sort records
@@ -152,10 +167,23 @@ er_block <- function(data,
       method    <- diag$recommended_block_method %||% "none"
       block_key <- block_key %||% diag$recommended_block_key
     } else {
-      method <- if (n <= 5000L) "none" else "prefix"
+      # M-29 fix (2026-10-06): the old default resolved to "prefix" with a NULL
+      # key here, which always died in stop("block_key must be valid"). Without
+      # a diagnosis there is no recommended key, so fall back to
+      # sorted-neighbourhood on row order: safe O(n*window), never crashes.
+      method <- if (n <= 5000L) "none" else "sn"
     }
   }
   method <- match.arg(method, c("none", "standard", "prefix", "sn"))
+  # If a key-based method was requested but no usable key exists, fall back to
+  # row-order sorted neighbourhood instead of stopping.
+  if (method %in% c("standard", "prefix") &&
+      (is.null(block_key) || !tolower(block_key) %in% names(df))) {
+    message("er_block: no blocking key available; falling back to method='sn' on row order.")
+    method <- "sn"
+    block_key <- NULL
+  }
+  if (!is.null(block_key)) block_key <- tolower(block_key)
 
   # Source column: linkage mode
   if (is.null(source_col) && !is.null(diag)) source_col <- diag$source_col
@@ -166,10 +194,18 @@ er_block <- function(data,
   pairs <- switch(method,
 
     "none" = {
-      if (n > 20000L)
-        warning("er_block method='none' with n=", n,
-                " generates ", format(choose(n, 2), big.mark = ","),
-                " pairs. Consider using blocking.")
+      # M-38 fix (2026-10-06): the old code only warned for n > 20000 and then
+      # tried to allocate ~choose(n,2) pairs (~1.6GB+ tibble at n = 20000),
+      # i.e. a silent OOM. Stop cleanly instead; an explicit max_pairs >= the
+      # estimate acts as the override for users who really mean it.
+      est <- choose(as.numeric(n), 2)
+      if (n > 20000L && est > max_pairs)
+        stop(sprintf(paste0("er_block: method='none' with n=%d would generate ~%s pairs. ",
+                            "Use a blocking method, or re-call with max_pairs >= %s to override."),
+                     n, format(est, big.mark = ","),
+                     format(ceiling(est), big.mark = ",")), call. = FALSE)
+      if (n < 2L)
+        return(tibble::tibble(idx1 = integer(), idx2 = integer()))
       ii <- rep(seq_len(n - 1L), times = rev(seq_len(n - 1L)))
       jj <- unlist(lapply(seq_len(n - 1L), function(i) (i + 1L):n))
       tibble::tibble(idx1 = as.integer(ii), idx2 = as.integer(jj))
@@ -179,7 +215,17 @@ er_block <- function(data,
       if (is.null(block_key) || !block_key %in% names(df))
         stop("er_block: 'block_key' must be a valid column name for method='standard'.")
       key_vec <- as.character(df[[block_key]])
-      key_vec[is.na(key_vec) | key_vec == ""] <- ""  # structural fallback
+      # B-02/M-30 fix (2026-10-06): records with missing keys get unique
+      # singleton block keys -> zero pairs among themselves. The old behaviour
+      # lumped all missing keys into one block, generating C(k,2) meaningless
+      # noise pairs (a missing key carries no blocking information) and OOMing
+      # for large k. Excluded records are reported, not silently dropped.
+      miss <- is.na(key_vec) | key_vec == ""
+      if (any(miss)) {
+        message(sprintf("er_block: %d record(s) have missing blocking keys and were excluded from candidate pairs.",
+                        sum(miss)))
+        key_vec[miss] <- sprintf("__ERBOT_MISSING_%d__", which(miss))
+      }
       .pairs_from_blocks(key_vec, max_pairs)
     },
 
@@ -187,11 +233,16 @@ er_block <- function(data,
       if (is.null(block_key) || !block_key %in% names(df))
         stop("er_block: 'block_key' must be a valid column name for method='prefix'.")
       key_vec <- as.character(df[[block_key]])
-      key_vec[is.na(key_vec) | key_vec == ""] <- ""
       key_vec <- tolower(stringi::stri_trans_nfkc(key_vec))
       p   <- max(1L, as.integer(prefix_len))
       pfx <- substr(key_vec, 1L, p)
-      pfx[pfx == ""] <- "__MISSING__"   # separate group for missing
+      # B-02/M-30 fix (2026-10-06): same missing-key treatment as "standard".
+      miss <- is.na(pfx) | pfx == ""
+      if (any(miss)) {
+        message(sprintf("er_block: %d record(s) have missing blocking keys and were excluded from candidate pairs.",
+                        sum(miss)))
+        pfx[miss] <- sprintf("__ERBOT_MISSING_%d__", which(miss))
+      }
       .pairs_from_blocks(pfx, max_pairs)
     },
 
@@ -201,8 +252,10 @@ er_block <- function(data,
         key_vec[is.na(key_vec)] <- ""
         tolower(stringi::stri_trans_nfkc(key_vec))
       } else {
-        # use row index order as fallback
-        as.character(seq_len(n))
+        # use row index order as fallback. M-32 fix (2026-10-06): the old
+        # as.character(seq_len(n)) fallback sorted lexicographically
+        # ("10" < "2"), silently breaking sorted-neighbourhood semantics.
+        seq_len(n)
       }
       .pairs_sn(sort_key, sn_window, max_pairs)
     }

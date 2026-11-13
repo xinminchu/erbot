@@ -199,19 +199,11 @@ er_multiplex <- function(S_list,
   )
   igraph::E(g_supra)$weight <- edges_x
 
-  # BUG-19 (2026-06-12): preserve the caller's global RNG state. The same
-  # set.seed(seed) still runs, so all sampling inside this function is
-  # byte-identical to previous behaviour; only the side effect on the
-  # caller's RNG stream is removed.
-  .rng_old <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
-    get(".Random.seed", envir = globalenv(), inherits = FALSE) else NULL
-  on.exit({
-    if (!is.null(.rng_old)) {
-      assign(".Random.seed", .rng_old, envir = globalenv())
-    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-      rm(".Random.seed", envir = globalenv())
-    }
-  }, add = TRUE)
+  # RNG discipline (Phase 3, 2026-10-06): preserve the caller's global RNG
+  # state. set.seed(seed) still runs, so sampling inside is byte-identical;
+  # only the side effect on the caller's RNG stream is removed.
+  .rng_restore <- .rng_save()
+  on.exit(.rng_restore(), add = TRUE)
   set.seed(seed)
   cl <- if (method == "leiden") {
     tryCatch(
@@ -272,19 +264,11 @@ er_multiplex <- function(S_list,
   )
   igraph::E(g)$weight <- tr$x
 
-  # BUG-19 (2026-06-12): preserve the caller's global RNG state. The same
-  # set.seed(seed) still runs, so all sampling inside this function is
-  # byte-identical to previous behaviour; only the side effect on the
-  # caller's RNG stream is removed.
-  .rng_old <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
-    get(".Random.seed", envir = globalenv(), inherits = FALSE) else NULL
-  on.exit({
-    if (!is.null(.rng_old)) {
-      assign(".Random.seed", .rng_old, envir = globalenv())
-    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-      rm(".Random.seed", envir = globalenv())
-    }
-  }, add = TRUE)
+  # RNG discipline (Phase 3, 2026-10-06): preserve the caller's global RNG
+  # state. set.seed(seed) still runs, so sampling inside is byte-identical;
+  # only the side effect on the caller's RNG stream is removed.
+  .rng_restore <- .rng_save()
+  on.exit(.rng_restore(), add = TRUE)
   set.seed(seed)
   cl <- if (method == "leiden") {
     tryCatch(

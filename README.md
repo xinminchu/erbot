@@ -1,3 +1,5 @@
+> **Note (2026-10-03):** this repo now hosts code only. Docs, literature, results, dev snapshots, man pages and data were moved to the private archive `xinminchu/erbot-archive`; active development continues in the private repo `xinminchu/erbotv2`.
+
 # erbot
 **Entity Resolution Pipeline & Utilities (R package)**
 
@@ -27,8 +29,8 @@ install.packages(c(
 install.packages("aricode")                 # ARI and related external metrics
 remotes::install_github("ddegras/GCMER")    # agreement metrics & graph coloring
 
-# Install erbot (replace with your GitHub path)
-remotes::install_github("YOUR_GITHUB_USER/erbot", upgrade = "never")
+# Install erbot
+remotes::install_github("xinminchu/erbot", upgrade = "never")
 
 R ≥ 4.1 recommended.
 

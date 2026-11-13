@@ -4,13 +4,17 @@
 #
 # er_classify()           -- main entry point
 # .classify_gmm_threshold -- internal: 2-component Gaussian EM boundary
+# .classify_center_mc     -- internal: CENTER / MERGE-CENTER (Hassanzadeh &
+#                            Miller 2009) scan + co-membership match matrix
+# .center_mc_labels        -- internal: union-find scan, pairs -> labels
 ########################################
 
 #' Classify record pairs as match or non-match
 #'
 #' Converts a combined similarity matrix \eqn{S} into a binary match graph
-#' \eqn{M} (sparse 0/1 matrix) by thresholding or by fitting a 2-component
-#' Gaussian mixture model (GMM) via EM.
+#' \eqn{M} (sparse 0/1 matrix) by thresholding, by fitting a 2-component
+#' Gaussian mixture model (GMM) via EM, or by the CENTER / MERGE-CENTER
+#' graph clustering algorithms of Hassanzadeh & Miller (2009).
 #'
 #' This step sits explicitly between fusion and clustering:
 #' \deqn{\{S^{(k)}\}
@@ -33,6 +37,19 @@
 #'     similarity values via EM; use the decision boundary (density crossing)
 #'     as \eqn{\tau}.  Falls back to \code{threshold} if EM fails or if
 #'     fewer than 20 pairs are available.}
+#'   \item{\code{"center"}}{CENTER (star clustering, Hassanzadeh & Miller
+#'     2009): scan pairs with \eqn{S_{ij} \ge \tau} by decreasing similarity;
+#'     the first time a record appears it becomes a cluster center, and its
+#'     not-yet-claimed neighbors join its cluster but may never recruit
+#'     others.  Each cluster is a star around its center, so transitive
+#'     chains cannot form.  A pair is classified as match iff both records
+#'     end up in the same cluster.}
+#'   \item{\code{"mc"}}{MERGE-CENTER (Hassanzadeh & Miller 2009): CENTER
+#'     plus a merge rule -- when a pair bridges to an already-claimed
+#'     record that is a cluster center, the two clusters merge (clusters
+#'     may then have several centers).  Fewer fragments than CENTER,
+#'     fewer chains than transitive closure.  A pair is classified as
+#'     match iff both records end up in the same cluster.}
 #' }
 #'
 #' @param S A symmetric sparse \code{dgCMatrix} (\eqn{n \times n}), such as
@@ -41,7 +58,9 @@
 #' @param method Classification method.  Default \code{"threshold"}.
 #' @param threshold Numeric in \eqn{[0,1]}.  Decision boundary for
 #'   \code{"threshold"}; also used as the fallback for \code{"gmm"}.
-#'   Default \code{0.5}.
+#'   For \code{"center"} / \code{"mc"} only pairs with
+#'   \eqn{S_{ij} \ge} \code{threshold} enter the scan (mirrors the paper's
+#'   thresholded join output).  Default \code{0.5}.
 #' @param verbose Logical.  Print the threshold used and the match-pair count.
 #'   Default \code{FALSE}.
 #'
@@ -61,10 +80,13 @@
 #'
 #' # GMM-based adaptive threshold
 #' M_gmm <- er_classify(S, method = "gmm", verbose = TRUE)
+#'
+#' # CENTER / MERGE-CENTER (Hassanzadeh & Miller 2009)
+#' M_mc <- er_classify(S, method = "mc", threshold = 0.5, verbose = TRUE)
 #' }
 #' @export
 er_classify <- function(S,
-                        method    = c("threshold", "gmm"),
+                        method    = c("threshold", "gmm", "center", "mc"),
                         threshold = 0.5,
                         verbose   = FALSE) {
   method <- match.arg(method)
@@ -90,6 +112,11 @@ er_classify <- function(S,
       if (verbose)
         message("er_classify: fewer than 20 non-trivial pairs; using threshold.")
     }
+  }
+
+  if (method %in% c("center", "mc")) {
+    return(.classify_center_mc(S, merge = (method == "mc"),
+                              threshold = tau, verbose = verbose))
   }
 
   # Build binary match matrix: entries >= tau become 1, rest 0
@@ -118,6 +145,99 @@ er_classify <- function(S,
     message(sprintf("er_classify: tau = %.4f; %d match pairs (upper triangle).",
                     tau, sum(Matrix::summary(M)$i < Matrix::summary(M)$j)))
   M
+}
+
+# ── CENTER / MERGE-CENTER (Hassanzadeh & Miller 2009) ─────────────────────────
+
+# Runs the CENTER (merge = FALSE) or MERGE-CENTER (merge = TRUE) scan over
+# the pairs of S with value >= threshold, then returns the binary match
+# matrix M where M[i, j] = 1 iff i and j end up in the same cluster.
+.classify_center_mc <- function(S, merge, threshold, verbose = FALSE) {
+  n  <- nrow(S)
+  tr <- Matrix::summary(S)
+  # upper triangle only (S is symmetric), drop diagonal & below-threshold
+  keep <- tr$i < tr$j & tr$x >= threshold & is.finite(tr$x)
+  ti <- tr$i[keep]
+  tj <- tr$j[keep]
+  tx <- tr$x[keep]
+
+  if (!length(ti)) {
+    if (verbose) message("er_classify: no pairs exceed threshold ", threshold,
+                         "; all pairs classified as non-match.")
+    return(Matrix::sparseMatrix(i = integer(0), j = integer(0),
+                                x = numeric(0), dims = c(n, n)))
+  }
+
+  labels <- .center_mc_labels(ti, tj, tx, n, merge)
+
+  # co-membership -> sparse binary M (upper triangle)
+  lab_id <- split(seq_len(n), labels)
+  ii <- integer(0)
+  jj <- integer(0)
+  for (members in lab_id) {
+    m <- length(members)
+    if (m >= 2L) {
+      pr <- utils::combn(members, 2L)
+      ii <- c(ii, pr[1L, ])
+      jj <- c(jj, pr[2L, ])
+    }
+  }
+  M <- Matrix::sparseMatrix(i = ii, j = jj, x = rep(1, length(ii)),
+                            dims = c(n, n), symmetric = TRUE)
+  M <- Matrix::drop0(M)
+  M <- as(as(M, "generalMatrix"), "dgCMatrix")
+
+  if (verbose)
+    message(sprintf(paste0("er_classify: method = \"%s\", tau = %.4f; ",
+                           "%d clusters, %d match pairs (upper triangle)."),
+                    if (merge) "mc" else "center", threshold,
+                    length(lab_id), length(ii)))
+  M
+}
+
+# Single scan of pairs sorted by decreasing similarity.
+# First-seen node becomes a cluster center; a center's unclaimed neighbors
+# join its cluster but may never recruit others (breaks transitive chains).
+# With merge = TRUE, a pair bridging to an already-claimed cluster center
+# merges the two clusters (MERGE-CENTER).
+.center_mc_labels <- function(ti, tj, tx, n, merge) {
+  o  <- order(tx, decreasing = TRUE)
+  ti <- ti[o]; tj <- tj[o]
+
+  parent   <- seq_len(n)
+  claimed  <- logical(n)
+  centered <- logical(n)
+
+  find <- function(a) {
+    while (parent[a] != a) {
+      parent[a] <<- parent[parent[a]]
+      a <- parent[a]
+    }
+    a
+  }
+
+  for (k in seq_along(ti)) {
+    i <- ti[k]; j <- tj[k]
+    if (i == j) next
+    if (!claimed[i]) {
+      centered[i] <- TRUE
+      claimed[i]  <- TRUE
+    }
+    if (!claimed[j]) {
+      if (centered[i]) {
+        ri <- find(i); rj <- find(j)
+        if (ri != rj) parent[rj] <- ri
+        claimed[j] <- TRUE
+      }
+    } else if (merge) {
+      ri <- find(i); rj <- find(j)
+      if (ri != rj && (centered[i] || centered[j])) parent[rj] <- ri
+    }
+  }
+
+  roots <- integer(n)
+  for (a in seq_len(n)) roots[a] <- find(a)
+  as.integer(factor(roots, levels = unique(roots)))
 }
 
 # ── 2-component Gaussian EM ────────────────────────────────────────────────────

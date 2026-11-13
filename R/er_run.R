@@ -3,17 +3,25 @@
 # Main entry point for the ERBOT v2 pipeline.
 # "Data In, Entity Out" -- one call gets you results.
 #
-# Pipeline stages:
+# Pipeline stages (the canonical ten; the website documents the same ten):
 #  1. er_load()       -- ingest
 #  2. er_diagnose()   -- field types, MV rates, recommendations
 #  3. er_block()      -- candidate pairs
 #  4. er_similarity() -- per-field similarities (NA-aware)
 #  5. er_weights()    -- field weights
 #  6. er_combine()    -- NA-aware weighted combination -> S
-#  7. er_cluster_all()-- all clustering methods
-#  8. er_merge()      -- consensus / transitivity post-processing
-#  9. er_evaluate()   -- ARI, B-cubed, H/C/V (if truth given)
-# 10. er_report()     -- CSV + console summary
+#  7. er_classify()   -- pair-level match / non-match decisions
+#  8. er_cluster_all()-- grouping records into entities
+#  9. er_merge()      -- consensus / transitivity post-processing
+# 10. er_evaluate()   -- ARI, B-cubed, H/C/V (if truth given)
+# plus an unnumbered output step (er_result object, optional CSV report).
+#
+# Implementation note: er_run() executes stages 7-8 inside a single
+# er_cluster_all() call -- each clustering method makes its own pair
+# decisions (thresholding the combined scores, or a supervised classifier
+# trained on labeled pairs) immediately before grouping.  The stage
+# messages below narrate the two stages in order around that one call;
+# er_classify() exposes stage 7 on its own.
 ########################################
 
 #' Run the full ERBOT entity resolution pipeline
@@ -25,7 +33,15 @@
 #'   (\code{"cora"}, \code{"affiliation"}, \code{"d10k"}).
 #' @param truth Optional ground truth: named integer vector, data.frame
 #'   (id, cluster_id), or file path.  If provided, supervised metrics are
-#'   computed and supervised weight learning is used.
+#'   computed and supervised weight learning is used.  Truth is \strong{never}
+#'   used for model selection (choice of k, choice of method) unless
+#'   \code{supervised_selection = TRUE}.
+#' @param supervised_selection Logical. If \code{TRUE}, ground truth may drive
+#'   \strong{model selection}: k-tuning inside \code{er_cluster_all()} and
+#'   method picking in \code{merge = "best"}.  Default \code{FALSE}: truth is
+#'   used only for evaluation (and for weight learning when
+#'   \code{weights = "ari"}).  Supervised selection makes reported metrics
+#'   optimistic -- enable it only for explicitly supervised experiments.
 #' @param id_col Character. ID column name.  Auto-detected if \code{NULL}.
 #' @param text_cols Character vector.  Columns to use.  Auto-detected from
 #'   \code{er_diagnose()} if \code{NULL}.
@@ -48,7 +64,10 @@
 #' @param threshold Numeric. Similarity threshold for \code{threshold_cc} and
 #'   graph coloring.
 #' @param merge Character. Post-processing: \code{"transitivity"},
-#'   \code{"consensus"}, \code{"best"}, or \code{"none"}.
+#'   \code{"consensus"}, \code{"best"}, or \code{"none"}.  Default
+#'   \code{"consensus"} (unsupervised).  \code{"best"} picks the method by ARI
+#'   against truth and is supervised -- it warns and needs
+#'   \code{supervised_selection = TRUE} to actually see the truth.
 #' @param consensus_alpha Numeric. Fraction for consensus merge.
 #' @param eval_mode Character. \code{"labeled_only"} or
 #'   \code{"singleton_fill"}.
@@ -81,9 +100,10 @@ er_run <- function(
   k                = NULL,
   k_grid           = c(5L, 10L, 15L, 20L, 30L, 50L),
   threshold        = 0.5,
-  merge            = "best",
+  merge            = "consensus",
   consensus_alpha  = 0.5,
   eval_mode        = "labeled_only",
+  supervised_selection = FALSE,
   out_dir          = NULL,
   verbose          = TRUE
 ) {
@@ -161,8 +181,14 @@ er_run <- function(
   .msg(sprintf("  S: %d x %d sparse matrix, %d non-zero entries.",
                n, n, Matrix::nnzero(S) - n))
 
-  # ── Stage 7: Cluster ──────────────────────────────────────────────────────
-  .msg("[er_run] Stage 7: clustering...")
+  # ── Stages 7-8: Classify + Cluster ───────────────────────────────────────
+  # One er_cluster_all() call performs both stages: each method first makes
+  # its pair-level decisions (stage 7), then groups records (stage 8).
+  .msg("[er_run] Stage 7: classifying candidate pairs (inside er_cluster_all, per method)...")
+  # Honesty guard (2026-10-06): truth drives k-tuning inside er_cluster_all()
+  # only under explicit supervised_selection = TRUE. By default the clustering
+  # stage never sees the labels; they are reserved for evaluation (stage 10).
+  cluster_truth <- if (isTRUE(supervised_selection)) truth_vec_full else NULL
   all_clusters <- er_cluster_all(
     S,
     methods      = cluster_methods,
@@ -170,27 +196,30 @@ er_run <- function(
     k_grid       = k_grid,
     threshold    = threshold,
     resolution   = 1,
-    truth_vec    = truth_vec_full,
+    truth_vec    = cluster_truth,
+    sim_list     = sim_list,
+    pairs        = pairs,
     verbose      = verbose
   )
+  .msg("[er_run] Stage 8: clustering records into entities...")
   .msg(sprintf("  %d method(s) ran.", length(all_clusters)))
 
-  # ── Stage 8: Merge ────────────────────────────────────────────────────────
-  .msg("[er_run] Stage 8: merging / post-processing...")
+  # ── Stage 9: Merge ────────────────────────────────────────────────────────
+  .msg("[er_run] Stage 9: merging / post-processing...")
   final_labels <- er_merge(
     all_clusters, S,
     method      = merge,
     threshold   = threshold,
     alpha       = consensus_alpha,
-    truth_vec   = truth_vec_full
+    truth_vec   = cluster_truth
   )
   .msg(sprintf("  final: %d clusters.", length(unique(final_labels))))
 
-  # ── Stage 9: Evaluate ─────────────────────────────────────────────────────
+  # ── Stage 10: Evaluate ────────────────────────────────────────────────────
   perf_tbl <- NULL
   unsup    <- NULL
   if (!is.null(truth_parsed) && nrow(truth_parsed)) {
-    .msg("[er_run] Stage 9a: evaluating (supervised)...")
+    .msg("[er_run] Stage 10a: evaluating (supervised)...")
     all_clusters_eval        <- all_clusters
     all_clusters_eval$final  <- final_labels
     perf_tbl <- tryCatch(
@@ -199,14 +228,14 @@ er_run <- function(
       error = function(e) { message("  evaluation error: ", e$message); NULL }
     )
   } else {
-    .msg("[er_run] Stage 9b: computing unsupervised quality scores...")
+    .msg("[er_run] Stage 10b: computing unsupervised quality scores...")
     unsup <- tryCatch(
       er_unsupervised_quality(final_labels, S),
       error = function(e) NULL
     )
   }
 
-  # ── Stage 10: Output ──────────────────────────────────────────────────────
+  # ── Output (unnumbered) ───────────────────────────────────────────────────
   predictions <- tibble::tibble(
     id         = id_vec,
     cluster_id = as.integer(final_labels)
